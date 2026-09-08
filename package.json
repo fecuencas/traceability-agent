@@ -1,0 +1,28 @@
+{
+  "name": "traceability-agent",
+  "version": "0.1.0",
+  "description": "MCP server for cross-repository integration mapping, contract-breakage detection and impact analysis, with the graph materialized as an Obsidian vault.",
+  "private": true,
+  "type": "module",
+  "main": "dist/server.js",
+  "bin": {
+    "traceability-agent-mcp": "dist/server.js",
+    "traceability-agent": "dist/cli/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "dev": "tsc --watch",
+    "test": "npm run build && node --test \"dist/**/*.test.js\""
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "fast-xml-parser": "^5.11.1",
+    "mermaid": "^11.17.2",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0"
+  }
+}

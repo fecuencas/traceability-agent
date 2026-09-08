@@ -1,0 +1,17 @@
+node_modules/
+dist/
+*.log
+
+# SO
+.DS_Store
+
+# Editores
+.vscode/
+.idea/
+
+# Segredos/config local — nunca deveria existir neste repo, mas por precaução
+.env
+.env.*
+
+# Artefatos de build TS incrementais
+*.tsbuildinfo
