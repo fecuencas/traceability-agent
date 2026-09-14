@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { Confidence, IntegrationSignalType, ServiceType } from "../adapters/types.js";
+import { assertSafeId } from "../config/safeId.js";
 import type { GraphEdge, ServiceNode } from "../graph/types.js";
 
 /** Faz parse do frontmatter YAML-simplificado que noteTemplates.ts gera (uma chave: valor-JSON por linha). */
@@ -32,6 +33,7 @@ function parseFrontmatter(content: string): Record<string, unknown> | undefined 
  * é idempotente, então chamar de novo para uma já marcada não duplica nada.
  */
 export function listRemovedEdges(vaultPath: string, groupId: string, currentEdgeIds: Set<string>): GraphEdge[] {
+  assertSafeId(groupId, "groupId");
   const integrationsDir = path.join(vaultPath, "Integrations", groupId);
   if (!fs.existsSync(integrationsDir)) return [];
 
@@ -84,6 +86,7 @@ export function reconstructMissingServiceNodes(
   groupId: string,
   currentServiceIds: Set<string>,
 ): ServiceNode[] {
+  assertSafeId(groupId, "groupId");
   const servicesDir = path.join(vaultPath, "Services", groupId);
   if (!fs.existsSync(servicesDir)) return [];
 
@@ -115,6 +118,7 @@ export function reconstructMissingServiceNodes(
  * banner logo após o título, sem tocar no restante do corpo (evidência antiga fica como histórico).
  */
 export function markIntegrationNoteRemoved(vaultPath: string, groupId: string, edgeId: string, detectedAt: string): void {
+  assertSafeId(groupId, "groupId");
   const filePath = path.join(vaultPath, "Integrations", groupId, `${edgeId}.md`);
   if (!fs.existsSync(filePath)) return;
 

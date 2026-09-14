@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { analyzeRepository } from "../adapters/adapterRegistry.js";
 import type { RepoAnalysisResult } from "../adapters/types.js";
+import { assertSafeId } from "./safeId.js";
 
 export const MANIFEST_VERSION = 1 as const;
 
@@ -53,12 +54,28 @@ export function writeManifest(repoPath: string, repoId: string, outPath?: string
   return manifest;
 }
 
+/**
+ * `repoId` é a origem mais sensível de todo o sistema: em modo descentralizado (`manifestPath`/
+ * `manifestsDir`), esse valor vem de um manifesto publicado por OUTRO repositório/time, e o
+ * `groupAnalysis.ts`/`obsidianWriter.ts` usam ele direto para montar `Repos/<groupId>/<repoId>.md` —
+ * sem validar aqui, um `repoId` malicioso tipo `"../../../../etc/algo"` escreveria fora do vault
+ * (`path.join` resolve os `..`). Validado aqui, na fronteira de leitura do arquivo externo, cobre os
+ * três jeitos de um repo entrar no grafo (`path` central, `manifestPath` explícito, `manifestsDir`
+ * automático) de uma vez só, já que todos os três acabam passando por aqui ou por `loadGroupConfig`.
+ */
 export function readManifest(manifestPath: string): RepoManifest {
   const raw = JSON.parse(fs.readFileSync(manifestPath, "utf8")) as RepoManifest;
   if (raw.manifestVersion !== MANIFEST_VERSION) {
     throw new Error(
       `Manifesto em ${manifestPath} tem manifestVersion ${String(raw.manifestVersion)}, esperado ${MANIFEST_VERSION}. ` +
         "Regenere o manifesto com a versão atual do traceability-agent.",
+    );
+  }
+  assertSafeId(raw.repoId, `repoId do manifesto ${manifestPath}`);
+  if (raw.analysis?.repoId !== raw.repoId) {
+    throw new Error(
+      `Manifesto em ${manifestPath}: repoId do topo (${JSON.stringify(raw.repoId)}) não bate com ` +
+        `analysis.repoId (${JSON.stringify(raw.analysis?.repoId)}) — manifesto corrompido ou adulterado.`,
     );
   }
   return raw;

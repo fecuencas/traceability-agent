@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { assertSafeId } from "../config/safeId.js";
 import { applyCascadingImpact } from "../graph/cascadeImpact.js";
 import type { GraphEdge, GraphSnapshot } from "../graph/types.js";
 import type { EdgeDiffEntry, ImpactDiff } from "../impact/diffEngine.js";
@@ -69,6 +70,14 @@ export function writeGraphToVault(
   vaultPath: string,
   snapshot: GraphSnapshot,
 ): { filesWritten: string[]; collisions: string[] } {
+  // Segunda camada de defesa (a primeira é `loadGroupConfig`/`readManifest` na leitura do
+  // config/manifesto): groupId/repoId viram segmento de caminho abaixo — um valor tipo
+  // "../../../etc/algo" faria `path.join` escrever fora de `vaultPath`. Vale mesmo já validado na
+  // entrada porque `GraphSnapshot` pode ser construído diretamente (testes, uso programático futuro)
+  // sem passar pelos loaders.
+  assertSafeId(snapshot.group, "groupId do snapshot");
+  for (const repo of snapshot.repos) assertSafeId(repo.repoId, `repoId do repositório ${JSON.stringify(repo.repoId)}`);
+
   ensureVaultStructure(vaultPath);
   const filesWritten: string[] = [];
   const collisions: string[] = [];
@@ -156,6 +165,8 @@ export function writeGraphToVault(
 }
 
 export function writeImpactReport(vaultPath: string, diff: ImpactDiff): string {
+  assertSafeId(diff.group, "groupId do diff");
+  assertSafeId(diff.repoId, "repoId do diff");
   ensureVaultStructure(vaultPath);
   return writeCurrentAndArchivePrevious(
     path.join(vaultPath, "Reports"),
@@ -199,6 +210,7 @@ function annotateIntegrationNote(vaultPath: string, groupId: string, edgeId: str
 
 /** Anota (na cauda manual, preservada entre regravações) todas as notas de integração afetadas pelo diff. */
 export function annotateAffectedNotes(vaultPath: string, diff: ImpactDiff): string[] {
+  assertSafeId(diff.group, "groupId do diff");
   const updated: string[] = [];
   for (const change of diff.changes) {
     const historyLine = `- ${diff.generatedAt}: ${describeChange(change)}`;

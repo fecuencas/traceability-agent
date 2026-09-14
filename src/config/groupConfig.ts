@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { assertSafeId } from "./safeId.js";
 
 const DEFAULT_CONFIG_RELATIVE_PATH = path.join(".traceability", "config.json");
 const REGISTRY_PATH = path.join(os.homedir(), ".traceability-agent", "registry.json");
@@ -65,6 +66,13 @@ export function loadGroupConfig(configPath?: string): GroupConfig {
     );
   }
   const raw = JSON.parse(fs.readFileSync(resolvedPath, "utf8")) as RawGroupConfig;
+  // groupId/repos[].id viram nome de arquivo/pasta dentro do vault (obsidianWriter.ts) — validados
+  // aqui, na fronteira de leitura do config, para que um id malicioso ("../../../etc/algo") seja
+  // rejeitado com um erro claro em vez de escrever fora do vault mais adiante.
+  assertSafeId(raw.groupId, `groupId em ${resolvedPath}`);
+  for (const repo of raw.repos) {
+    assertSafeId(repo.id, `repos[].id em ${resolvedPath}`);
+  }
   // resolvedPath = <projectRoot>/.traceability/config.json -> paths relativos são relativos a <projectRoot>,
   // não à própria pasta .traceability (senão "./order-service" resolveria para dentro de .traceability/).
   const projectRoot = path.dirname(path.dirname(resolvedPath));

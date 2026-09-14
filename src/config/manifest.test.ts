@@ -55,6 +55,45 @@ test("discoverManifests encontra manifestos em cada subpasta imediata, ignora as
   fs.rmSync(rootDir, { recursive: true, force: true });
 });
 
+// repoId de manifesto é a origem mais sensível do sistema: em modo descentralizado, vem de um
+// repositório-irmão publicado por outro time, e flui direto pra `Repos/<groupId>/<repoId>.md` em
+// obsidianWriter.ts. Sem validar aqui, um repoId malicioso escreveria fora do vault.
+test("readManifest rejeita repoId com tentativa de path traversal", () => {
+  const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "manifest-"));
+  const manifestPath = path.join(rootDir, "bad-manifest.json");
+  fs.writeFileSync(
+    manifestPath,
+    JSON.stringify({
+      manifestVersion: 1,
+      repoId: "../../../../tmp/evil",
+      analysis: { repoId: "../../../../tmp/evil" },
+    }),
+    "utf8",
+  );
+
+  assert.throws(() => readManifest(manifestPath), /repoId.*inválido/s);
+
+  fs.rmSync(rootDir, { recursive: true, force: true });
+});
+
+test("readManifest rejeita manifesto com repoId do topo divergente de analysis.repoId", () => {
+  const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "manifest-"));
+  const manifestPath = path.join(rootDir, "adulterado-manifest.json");
+  fs.writeFileSync(
+    manifestPath,
+    JSON.stringify({
+      manifestVersion: 1,
+      repoId: "repo-a",
+      analysis: { repoId: "repo-b" },
+    }),
+    "utf8",
+  );
+
+  assert.throws(() => readManifest(manifestPath), /não bate com/);
+
+  fs.rmSync(rootDir, { recursive: true, force: true });
+});
+
 test("discoverManifests ignora manifesto corrompido sem derrubar a descoberta dos outros", () => {
   const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "manifest-"));
   const repoA = makeNodeRepo(rootDir, "repo-a");

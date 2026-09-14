@@ -75,6 +75,27 @@ test("repoId novo (sem colisão) é gravado normalmente", () => {
   fs.rmSync(vaultPath, { recursive: true, force: true });
 });
 
+// Path traversal: mesmo que um repoId/groupId malicioso passasse pelos loaders (config/manifest),
+// writeGraphToVault precisa recusar sozinho, já que monta o caminho da nota concatenando esses ids —
+// um "../../../tmp/evil" resolveria fora de vaultPath se não fosse validado aqui.
+test("writeGraphToVault rejeita repoId com tentativa de path traversal, sem escrever nada fora do vault", () => {
+  const vaultPath = fs.mkdtempSync(path.join(os.tmpdir(), "vault-"));
+  const outsideMarker = path.join(vaultPath, "..", `${path.basename(vaultPath)}-evil.md`);
+
+  assert.throws(() => writeGraphToVault(vaultPath, makeSnapshot("sistema-a", "../../evil")), /repoId.*inválido/s);
+  assert.equal(fs.existsSync(outsideMarker), false);
+
+  fs.rmSync(vaultPath, { recursive: true, force: true });
+});
+
+test("writeGraphToVault rejeita groupId com tentativa de path traversal", () => {
+  const vaultPath = fs.mkdtempSync(path.join(os.tmpdir(), "vault-"));
+
+  assert.throws(() => writeGraphToVault(vaultPath, makeSnapshot("../../evil", "order-service")), /groupId.*inválido/s);
+
+  fs.rmSync(vaultPath, { recursive: true, force: true });
+});
+
 // Segunda camada de defesa que sobra depois do namespacing por pasta: um arquivo plantado à mão (ou
 // resquício de uma versão anterior do agente, ou uma nota tamperada) dentro da subpasta do grupo,
 // mas com um `group:` de frontmatter DIFERENTE do esperado, ainda não é sobrescrito.
