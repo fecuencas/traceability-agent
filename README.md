@@ -221,14 +221,23 @@ the same machine. See [`docs/decentralized-config.md`](docs/decentralized-config
 
 ### Standalone CLI
 
-For CI or a pre-commit hook, without an MCP client in the loop:
+MCP is how another AI tool talks to the agent — it's optional, not a requirement to use this at
+all. Every day-to-day flow is also available straight from the terminal, no AI/MCP client in the
+loop, useful for CI, a pre-commit hook, or just working locally:
 
 ```bash
-traceability-agent scan . --repo-id my-repo
+traceability-agent scan . --repo-id my-repo                # analyze this repo alone, write manifest.json
+traceability-agent update-graph [--config <path>] [--vault <path>]   # scan the group, write/update the vault
+traceability-agent html-report [--config <path>] [--vault <path>]    # self-contained HTML report
+traceability-agent impact --repo-id my-repo [--no-persist]           # diff + blast radius for one repo
+traceability-agent impact-report --repo-id my-repo                   # write the Markdown impact report
 ```
 
-Analyzes the given path alone (no knowledge of sibling repos) and writes
-`.traceability/manifest.json` — one building block of the decentralized/manifest-based setup above.
+Each subcommand calls the exact same underlying function as its MCP tool counterpart (see
+`src/tools/*.ts`), so the CLI never drifts from what the agent does when an AI calls it. `scan`
+analyzes the given path alone (no knowledge of sibling repos) and writes `.traceability/manifest.json`
+— one building block of the decentralized/manifest-based setup above; the rest assume the current
+directory is a tracked group's root (or `--config` pointing at one).
 
 ## Supported languages
 

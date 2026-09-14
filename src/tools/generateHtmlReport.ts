@@ -11,6 +11,73 @@ import { listRemovedEdges, reconstructMissingServiceNodes } from "../obsidian/re
 import { extractHtmlGeneratedAt, writeCurrentAndArchivePrevious } from "../obsidian/versionedReport.js";
 import { renderHtmlReport } from "../reports/htmlReport.js";
 
+export interface GenerateHtmlReportOptions {
+  configPath?: string;
+  vaultPath?: string;
+}
+
+export interface GenerateHtmlReportResult {
+  reportPath: string;
+  repos: number;
+  serviceNodes: number;
+  integrations: number;
+  broken: number;
+  impacted: number;
+  removed: number;
+  warnings: number;
+}
+
+/**
+ * Núcleo de "gerar o relatório HTML" — reaproveitado pela tool MCP `generate_html_report` e pelo
+ * subcomando `html-report` do CLI standalone, mesmo motivo do `runUpdateObsidianGraph` em
+ * `updateObsidianGraph.ts`.
+ */
+export function runGenerateHtmlReport(options: GenerateHtmlReportOptions): GenerateHtmlReportResult {
+  const { config, snapshot } = analyzeGroup(options.configPath);
+  const resolvedVaultPath = options.vaultPath ?? config.vaultPath ?? DEFAULT_VAULT_PATH;
+
+  const previousBaseline = loadRenderBaseline(config.configPath);
+  snapshot.edges = flagVersionWarnings(snapshot.edges, previousBaseline);
+  snapshot.edges = flagContractSchemaWarnings(snapshot.edges, previousBaseline);
+  saveRenderBaseline(config.configPath, snapshot);
+
+  // inclui integrações que existem no vault mas não foram detectadas nesta varredura (removidas),
+  // para o relatório mostrar o mesmo alerta que as notas do Obsidian já mostram
+  const currentEdgeIds = new Set(snapshot.edges.map((edge) => edge.id));
+  const removedEdges = listRemovedEdges(resolvedVaultPath, config.groupId, currentEdgeIds);
+  snapshot.edges = applyCascadingImpact(
+    [...snapshot.edges, ...removedEdges],
+    snapshot.repos.map((repo) => repo.repoId),
+  );
+  // Mesmo caso do writeGraphToVault: um recurso de infra pode sumir por completo da varredura
+  // (não só a edge) — sem reconstruir o ServiceNode a partir da nota antiga, o relatório perde
+  // o hexágono/rótulo amigável desse nó assim que uma edge removida ainda o referencia.
+  const currentServiceIds = new Set(snapshot.serviceNodes.map((node) => node.id));
+  const missingServiceNodes = reconstructMissingServiceNodes(resolvedVaultPath, config.groupId, currentServiceIds);
+  snapshot.serviceNodes = [...snapshot.serviceNodes, ...missingServiceNodes];
+
+  const html = renderHtmlReport(snapshot);
+  const reportsDir = path.join(resolvedVaultPath, "Reports");
+  const reportPath = writeCurrentAndArchivePrevious(
+    reportsDir,
+    `html-report__${config.groupId}`,
+    ".html",
+    html,
+    extractHtmlGeneratedAt,
+  );
+
+  return {
+    reportPath,
+    repos: snapshot.repos.length,
+    serviceNodes: snapshot.serviceNodes.length,
+    integrations: snapshot.edges.length,
+    broken: snapshot.edges.filter((edge) => edge.status === "broken").length,
+    impacted: snapshot.edges.filter((edge) => edge.status === "impacted").length,
+    removed: snapshot.edges.filter((edge) => edge.status === "removed").length,
+    warnings: snapshot.edges.filter((edge) => edge.versionWarning).length,
+  };
+}
+
 export function registerGenerateHtmlReportTool(server: McpServer): void {
   server.registerTool(
     "generate_html_report",
@@ -36,59 +103,9 @@ export function registerGenerateHtmlReportTool(server: McpServer): void {
       },
     },
     async ({ configPath, vaultPath }) => {
-      const { config, snapshot } = analyzeGroup(configPath);
-      const resolvedVaultPath = vaultPath ?? config.vaultPath ?? DEFAULT_VAULT_PATH;
-
-      const previousBaseline = loadRenderBaseline(config.configPath);
-      snapshot.edges = flagVersionWarnings(snapshot.edges, previousBaseline);
-      snapshot.edges = flagContractSchemaWarnings(snapshot.edges, previousBaseline);
-      saveRenderBaseline(config.configPath, snapshot);
-
-      // inclui integrações que existem no vault mas não foram detectadas nesta varredura (removidas),
-      // para o relatório mostrar o mesmo alerta que as notas do Obsidian já mostram
-      const currentEdgeIds = new Set(snapshot.edges.map((edge) => edge.id));
-      const removedEdges = listRemovedEdges(resolvedVaultPath, config.groupId, currentEdgeIds);
-      snapshot.edges = applyCascadingImpact(
-        [...snapshot.edges, ...removedEdges],
-        snapshot.repos.map((repo) => repo.repoId),
-      );
-      // Mesmo caso do writeGraphToVault: um recurso de infra pode sumir por completo da varredura
-      // (não só a edge) — sem reconstruir o ServiceNode a partir da nota antiga, o relatório perde
-      // o hexágono/rótulo amigável desse nó assim que uma edge removida ainda o referencia.
-      const currentServiceIds = new Set(snapshot.serviceNodes.map((node) => node.id));
-      const missingServiceNodes = reconstructMissingServiceNodes(resolvedVaultPath, config.groupId, currentServiceIds);
-      snapshot.serviceNodes = [...snapshot.serviceNodes, ...missingServiceNodes];
-
-      const html = renderHtmlReport(snapshot);
-      const reportsDir = path.join(resolvedVaultPath, "Reports");
-      const reportPath = writeCurrentAndArchivePrevious(
-        reportsDir,
-        `html-report__${config.groupId}`,
-        ".html",
-        html,
-        extractHtmlGeneratedAt,
-      );
-
+      const result = runGenerateHtmlReport({ configPath, vaultPath });
       return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(
-              {
-                reportPath,
-                repos: snapshot.repos.length,
-                serviceNodes: snapshot.serviceNodes.length,
-                integrations: snapshot.edges.length,
-                broken: snapshot.edges.filter((edge) => edge.status === "broken").length,
-                impacted: snapshot.edges.filter((edge) => edge.status === "impacted").length,
-                removed: snapshot.edges.filter((edge) => edge.status === "removed").length,
-                warnings: snapshot.edges.filter((edge) => edge.versionWarning).length,
-              },
-              null,
-              2,
-            ),
-          },
-        ],
+        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
       };
     },
   );

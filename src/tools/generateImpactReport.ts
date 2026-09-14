@@ -34,6 +34,33 @@ function coerceDiff(diff: unknown): ImpactDiff | undefined {
   return isImpactDiffShape(diff) ? diff : undefined;
 }
 
+export interface GenerateImpactReportOptions {
+  configPath?: string;
+  repoId: string;
+  diff?: unknown;
+  vaultPath?: string;
+}
+
+export interface GenerateImpactReportResult {
+  reportPath: string;
+  notesUpdated: string[];
+}
+
+/**
+ * Núcleo de "gravar o relatório de impacto" — reaproveitado pela tool MCP `generate_impact_report` e
+ * pelo subcomando `impact-report` do CLI standalone, mesmo motivo do `runUpdateObsidianGraph` em
+ * `updateObsidianGraph.ts`.
+ */
+export function runGenerateImpactReport(options: GenerateImpactReportOptions): GenerateImpactReportResult {
+  const resolvedDiff = coerceDiff(options.diff) ?? computeReadOnlyDiff(options.configPath, options.repoId);
+  const resolvedVaultPath = options.vaultPath ?? loadGroupConfig(options.configPath).vaultPath ?? DEFAULT_VAULT_PATH;
+
+  const reportPath = writeImpactReport(resolvedVaultPath, resolvedDiff);
+  const notesUpdated = annotateAffectedNotes(resolvedVaultPath, resolvedDiff);
+
+  return { reportPath, notesUpdated };
+}
+
 export function registerGenerateImpactReportTool(server: McpServer): void {
   server.registerTool(
     "generate_impact_report",
@@ -67,14 +94,9 @@ export function registerGenerateImpactReportTool(server: McpServer): void {
       },
     },
     async ({ configPath, repoId, diff, vaultPath }) => {
-      const resolvedDiff = coerceDiff(diff) ?? computeReadOnlyDiff(configPath, repoId);
-      const resolvedVaultPath = vaultPath ?? loadGroupConfig(configPath).vaultPath ?? DEFAULT_VAULT_PATH;
-
-      const reportPath = writeImpactReport(resolvedVaultPath, resolvedDiff);
-      const notesUpdated = annotateAffectedNotes(resolvedVaultPath, resolvedDiff);
-
+      const result = runGenerateImpactReport({ configPath, repoId, diff, vaultPath });
       return {
-        content: [{ type: "text", text: JSON.stringify({ reportPath, notesUpdated }, null, 2) }],
+        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
       };
     },
   );

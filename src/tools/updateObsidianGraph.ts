@@ -9,6 +9,40 @@ import { flagVersionWarnings } from "../graph/versionWarnings.js";
 import { writeGraphToVault } from "../obsidian/obsidianWriter.js";
 import { writeOverviewToVault } from "../obsidian/overviewWriter.js";
 
+export interface UpdateObsidianGraphOptions {
+  configPath?: string;
+  vaultPath?: string;
+}
+
+export interface UpdateObsidianGraphResult {
+  vaultPath: string;
+  filesWritten: string[];
+  collisions: string[];
+}
+
+/**
+ * Núcleo de "escanear o grupo e gravar o vault" — reaproveitado pela tool MCP `update_obsidian_graph`
+ * e pelo subcomando `update-graph` do CLI standalone (`src/cli/index.ts`), pra não duplicar essa
+ * lógica entre as duas superfícies (a MCP pra outras IAs falarem com o agente, o CLI pra uso local
+ * direto no terminal, sem cliente MCP nenhum).
+ */
+export function runUpdateObsidianGraph(options: UpdateObsidianGraphOptions): UpdateObsidianGraphResult {
+  const { config, snapshot } = analyzeGroup(options.configPath);
+  const previousBaseline = loadRenderBaseline(config.configPath);
+  snapshot.edges = flagVersionWarnings(snapshot.edges, previousBaseline);
+  snapshot.edges = flagContractSchemaWarnings(snapshot.edges, previousBaseline);
+  const resolvedVaultPath = options.vaultPath ?? config.vaultPath ?? DEFAULT_VAULT_PATH;
+  const result = writeGraphToVault(resolvedVaultPath, snapshot);
+  saveRenderBaseline(config.configPath, snapshot);
+  recordGroupInRegistry(config.groupId, config.configPath, snapshot.generatedAt);
+  const overview = writeOverviewToVault(resolvedVaultPath);
+  return {
+    vaultPath: resolvedVaultPath,
+    filesWritten: [...result.filesWritten, overview.filePath],
+    collisions: result.collisions,
+  };
+}
+
 export function registerUpdateObsidianGraphTool(server: McpServer): void {
   server.registerTool(
     "update_obsidian_graph",
@@ -40,23 +74,15 @@ export function registerUpdateObsidianGraphTool(server: McpServer): void {
       },
     },
     async ({ configPath, vaultPath }) => {
-      const { config, snapshot } = analyzeGroup(configPath);
-      const previousBaseline = loadRenderBaseline(config.configPath);
-      snapshot.edges = flagVersionWarnings(snapshot.edges, previousBaseline);
-      snapshot.edges = flagContractSchemaWarnings(snapshot.edges, previousBaseline);
-      const resolvedVaultPath = vaultPath ?? config.vaultPath ?? DEFAULT_VAULT_PATH;
-      const result = writeGraphToVault(resolvedVaultPath, snapshot);
-      saveRenderBaseline(config.configPath, snapshot);
-      recordGroupInRegistry(config.groupId, config.configPath, snapshot.generatedAt);
-      const overview = writeOverviewToVault(resolvedVaultPath);
+      const result = runUpdateObsidianGraph({ configPath, vaultPath });
       return {
         content: [
           {
             type: "text",
             text: JSON.stringify(
               {
-                vaultPath: resolvedVaultPath,
-                filesWritten: [...result.filesWritten, overview.filePath],
+                vaultPath: result.vaultPath,
+                filesWritten: result.filesWritten,
                 ...(result.collisions.length > 0 ? { collisions: result.collisions } : {}),
               },
               null,
