@@ -177,6 +177,12 @@ to the current working directory by default, or accept an explicit `configPath`.
 (snapshots used for impact diffing) lives in `.traceability/state/` inside the tracked project
 itself — never inside this package.
 
+`groupId` and every `repos[].id` must match `^[A-Za-z0-9][A-Za-z0-9._-]*$` — letters, digits, `.`,
+`_` and `-`, starting with a letter or digit. They're rejected otherwise, because both end up as a
+file/folder name inside the vault (`Repos/<groupId>/<repoId>.md`); the same check applies to
+`repoId` inside a `.traceability/manifest.json` (see `manifestPath`/`manifestsDir` below), which is
+the more sensitive case since that file can be published by a sibling repo you don't control.
+
 By default every group's notes go into one shared Obsidian vault
 (`~/ObsidianVaults/traceability-vault/`), so you keep a single Obsidian window open and it stays
 current with whatever project you last scanned — Obsidian only ever shows one fixed vault folder
@@ -285,8 +291,9 @@ Own test suite (`node:test`, no extra dependency), colocated with each module
 (`src/<area>/<file>.test.ts`). Covers real bugs found and fixed during development — a sibling
 group-id collision, directional cascade propagation, blast radius, service-node dedup across
 cross-technology publishers/consumers, service nodes reconstructed when an infra resource
-disappears from a scan, regex false-positives on a stub's own declaration, and the OpenAPI
-field-level diff described above.
+disappears from a scan, regex false-positives on a stub's own declaration, the OpenAPI field-level
+diff described above, and a path-traversal attempt via a malicious `groupId`/`repoId` (config or
+manifest) rejected before it can write outside the vault.
 
 ## License
 
