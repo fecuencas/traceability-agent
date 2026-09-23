@@ -51,7 +51,7 @@ test("não reivindica import de um groupId irmão mais específico (Achado #1)",
   });
 
   const result = checkPublishedArtifactIntegrity(sourceRepo, targetRepo, [sourceRepo, targetRepo, siblingRepo]);
-  assert.equal(result.broken, false, result.reason);
+  assert.equal(result.broken, false, result.reason ?? "expected the artifact dependency to not be broken");
 
   fs.rmSync(sourceRepoPath, { recursive: true, force: true });
   fs.rmSync(targetRepoPath, { recursive: true, force: true });
