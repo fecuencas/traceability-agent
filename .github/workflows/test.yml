@@ -20,3 +20,20 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20.x
+          cache: npm
+      - run: npm ci
+      - name: npm audit (fails on high/critical vulnerabilities)
+        run: npm audit --audit-level=high
+      - name: Dependency license check
+        run: >-
+          npx --yes license-checker --excludePrivatePackages
+          --onlyAllow "MIT;MIT*;ISC;BSD-2-Clause;BSD-3-Clause;Apache-2.0;(MPL-2.0 OR Apache-2.0);Unlicense;0BSD;CC0-1.0"
+          --summary

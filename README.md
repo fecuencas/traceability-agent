@@ -317,6 +317,16 @@ disappears from a scan, regex false-positives on a stub's own declaration, the O
 diff described above, and a path-traversal attempt via a malicious `groupId`/`repoId` (config or
 manifest) rejected before it can write outside the vault.
 
+## Security
+
+Found a security issue? See [SECURITY.md](SECURITY.md) for how to report it.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for how to build, test, and open a PR.
+
 ## License
 
-[MIT](LICENSE)
+Copyright (c) 2026 Fernando Cuencas
+
+This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.

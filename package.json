@@ -2,6 +2,18 @@
   "name": "traceability-agent",
   "version": "0.1.0",
   "description": "MCP server for cross-repository integration mapping, contract-breakage detection and impact analysis, with the graph materialized as an Obsidian vault.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/fecuencas/traceability-agent.git"
+  },
+  "bugs": {
+    "url": "https://github.com/fecuencas/traceability-agent/issues"
+  },
+  "homepage": "https://github.com/fecuencas/traceability-agent",
+  "engines": {
+    "node": ">=18"
+  },
   "private": true,
   "type": "module",
   "main": "dist/server.js",
@@ -16,7 +28,7 @@
     "test": "npm run build && find dist -name '*.test.js' -print0 | xargs -0 node --test"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.0.0",
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "fast-xml-parser": "^5.11.1",
     "mermaid": "^11.17.2",
     "zod": "^3.23.8"
