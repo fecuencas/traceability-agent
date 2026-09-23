@@ -39,16 +39,36 @@ not confirmed broken) · 🟠 cascading impact · 🔴 broken.
 <tr>
 <td width="50%">
 
-**Graph map** — one Mermaid diagram per connected component, colored by real status:
+**Obsidian graph view, healthy** — every tracked repo colored green, node groups (broken/impacted/
+warning/ok) configured as Obsidian graph groups so status is visible without opening a single note:
 
-![Graph map showing a cascading break: shared-utils and billing-service in red, payment-processor in orange](docs/screenshots/graph-map-cascade.png)
+![Obsidian native graph view with every repo and service node colored green, no breaks](docs/screenshots/graph-map-healthy.png)
 
 </td>
 <td width="50%">
 
-**Contract-breakage detection** — two independent repos, same contract, now disagreeing:
+**Same graph, moments later** — a contract diverged between `order-service` and `shipping-service`;
+both turn red and everything transitively connected to them turns orange:
 
-![Graph map showing orders-api-consumer and orders-api-provider both broken over a contract mismatch](docs/screenshots/graph-map-contract-break.png)
+![Obsidian native graph view with order-service and shipping-service in red and their neighbors in orange after a contract break](docs/screenshots/graph-map-broken.png)
+
+</td>
+</tr>
+<tr>
+<td width="50%">
+
+**HTML report, same healthy state** — the self-contained report for the same 3-repo group shown
+in the graph view above:
+
+![HTML report for a 3-repo group showing zero broken and zero cascading-impact integrations](docs/screenshots/report-healthy.png)
+
+</td>
+<td width="50%">
+
+**HTML report after the break** — the same 3 repos, one broken contract, five integrations now
+flagged as cascading impact:
+
+![HTML report for the same group after a contract break, showing one broken and five cascading-impact integrations](docs/screenshots/report-broken.png)
 
 </td>
 </tr>
