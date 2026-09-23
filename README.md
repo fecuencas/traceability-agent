@@ -1,5 +1,7 @@
 # traceability-agent
 
+[![test](https://github.com/fecuencas/traceability-agent/actions/workflows/test.yml/badge.svg)](https://github.com/fecuencas/traceability-agent/actions/workflows/test.yml)
+
 An [MCP](https://modelcontextprotocol.io) server that maps integrations across the multiple
 repositories that make up one distributed system, detects breakage statically (no build/tests
 required), and visualizes the whole thing as a graph. It speaks the Model Context Protocol, so it
@@ -78,7 +80,7 @@ project together, so you can browse it interactively instead of only reading a s
 Requires Node.js 18+.
 
 ```bash
-git clone <this-repo-url> traceability-agent
+git clone https://github.com/fecuencas/traceability-agent.git
 cd traceability-agent
 npm install
 npm run build
@@ -297,4 +299,4 @@ manifest) rejected before it can write outside the vault.
 
 ## License
 
-Not decided yet.
+[MIT](LICENSE)
