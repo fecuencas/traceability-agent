@@ -13,6 +13,21 @@ export function sanitizeId(value: string): string {
   return value.replace(/[^a-zA-Z0-9_]/g, "_");
 }
 
+/** Escapa texto antes de colocá-lo dentro de um label Mermaid entre aspas duplas (`"..."`). Sem
+ * isso, um valor com aspas — vindo de conteúdo escaneado num repositório e portanto não confiável
+ * (nome de tópico/fila extraído do código-fonte, versão de dependência, coordenada de artefato) —
+ * fecha a string do label e permite injetar sintaxe Mermaid arbitrária (nós/arestas falsos,
+ * `classDef`, `click`) no diagrama gerado. Os labels do Mermaid usam `htmlLabels` por padrão, então
+ * entidades HTML decodificam de volta pro caractere literal sem reabrir marcação. */
+export function escapeMermaidLabel(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/[\r\n]+/g, " ");
+}
+
 /** Contexto compartilhado pelos três renderers para saber, a partir de um id de nó vizinho
  * encontrado numa aresta, se é um repositório (e qual linguagem) ou um nó de serviço de infra (e
  * qual tipo) — sem isso cada renderer teria que receber e cruzar as duas listas na mão. */
@@ -42,8 +57,9 @@ function shortServiceTypeLabel(serviceType: ServiceType): string {
 
 function repoNodeLabel(repoId: string, ctx: GraphRenderContext, options: NodeLabelOptions = {}): string {
   const language = ctx.languageByRepoId.get(repoId);
-  if (options.showTypeLabel) return language ? `${repoId}<br/>(${language})` : repoId;
-  return language ? `${LANGUAGE_META[language].emoji} ${repoId}` : repoId;
+  const safeRepoId = escapeMermaidLabel(repoId);
+  if (options.showTypeLabel) return language ? `${safeRepoId}<br/>(${language})` : safeRepoId;
+  return language ? `${LANGUAGE_META[language].emoji} ${safeRepoId}` : safeRepoId;
 }
 
 /** Nome de `classDef` Mermaid válido (sem hífen) por tipo de serviço, ex: "aws-step-functions" -> "svcAwsStepFunctions". */
@@ -64,15 +80,16 @@ function serviceTypeClassDefs(): string[] {
 function declareNodeLines(id: string, ctx: GraphRenderContext, options: NodeLabelOptions = {}): { declLine: string; classLines: string[] } {
   const serviceNode = ctx.serviceNodesById.get(id);
   if (serviceNode) {
+    const safeLabel = escapeMermaidLabel(serviceNode.label);
     if (options.showTypeLabel) {
       return {
-        declLine: `    ${sanitizeId(id)}{{"${serviceNode.label}<br/>(${shortServiceTypeLabel(serviceNode.serviceType)})"}}`,
+        declLine: `    ${sanitizeId(id)}{{"${safeLabel}<br/>(${shortServiceTypeLabel(serviceNode.serviceType)})"}}`,
         classLines: [],
       };
     }
     const emoji = `${SERVICE_TYPE_META[serviceNode.serviceType].emoji} `;
     return {
-      declLine: `    ${sanitizeId(id)}{{"${emoji}${serviceNode.label}"}}`,
+      declLine: `    ${sanitizeId(id)}{{"${emoji}${safeLabel}"}}`,
       classLines: [`    class ${sanitizeId(id)} ${svcClassName(serviceNode.serviceType)}`],
     };
   }
@@ -80,7 +97,7 @@ function declareNodeLines(id: string, ctx: GraphRenderContext, options: NodeLabe
 }
 
 function edgeLabel(edge: GraphEdge): string {
-  const versionSuffix = edge.version ? ` v${edge.version}` : "";
+  const versionSuffix = edge.version ? ` v${escapeMermaidLabel(edge.version)}` : "";
   const statusSuffix =
     edge.status === "broken"
       ? " ⚠️"
@@ -273,7 +290,7 @@ export function renderEgoGraph(
   const shown = externalValues.slice(0, EXTERNAL_NODE_LIMIT);
   for (const value of shown) {
     const extId = `ext_${sanitizeId(value)}`;
-    lines.push(`    ${extId}(("${value}"))`);
+    lines.push(`    ${extId}(("${escapeMermaidLabel(value)}"))`);
     lines.push(`    ${selfId} -.->|"externo"| ${extId}`);
     linkStyles.push(`    linkStyle ${edgeIndex} stroke:${EXTERNAL_EDGE_COLOR},stroke-width:1px,stroke-dasharray:3 3`);
     edgeIndex++;
@@ -347,18 +364,20 @@ export function renderOverviewGraph(groups: OverviewGroup[], options: MermaidGra
     const prefix = sanitizeId(group.componentKey ?? group.groupId);
     groupPrefixes.push(prefix);
     const toDiagramId = (id: string) => `${prefix}__${sanitizeId(id)}`;
-    lines.push(`    subgraph ${prefix}["${group.label ?? group.groupId}"]`);
+    lines.push(`    subgraph ${prefix}["${escapeMermaidLabel(group.label ?? group.groupId)}"]`);
     for (const repo of group.repos) {
+      const safeRepoId = escapeMermaidLabel(repo.repoId);
       const label = options.showTypeLabel
-        ? `${repo.repoId}<br/>(${repo.language})`
-        : `${LANGUAGE_META[repo.language].emoji} ${repo.repoId}`;
+        ? `${safeRepoId}<br/>(${repo.language})`
+        : `${LANGUAGE_META[repo.language].emoji} ${safeRepoId}`;
       lines.push(`        ${toDiagramId(repo.repoId)}["${label}"]`);
       allDiagramIds.add(toDiagramId(repo.repoId));
     }
     for (const node of group.serviceNodes) {
+      const safeLabel = escapeMermaidLabel(node.label);
       const label = options.showTypeLabel
-        ? `${node.label}<br/>(${shortServiceTypeLabel(node.serviceType)})`
-        : `${SERVICE_TYPE_META[node.serviceType].emoji} ${node.label}`;
+        ? `${safeLabel}<br/>(${shortServiceTypeLabel(node.serviceType)})`
+        : `${SERVICE_TYPE_META[node.serviceType].emoji} ${safeLabel}`;
       lines.push(`        ${toDiagramId(node.id)}{{"${label}"}}`);
       if (!options.showTypeLabel) classLines.push(`    class ${toDiagramId(node.id)} ${svcClassName(node.serviceType)}`);
       allDiagramIds.add(toDiagramId(node.id));
