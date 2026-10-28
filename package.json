@@ -28,7 +28,7 @@
     "test": "npm run build && find dist -name '*.test.js' -print0 | xargs -0 node --test"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@modelcontextprotocol/sdk": "^1.32.2",
     "fast-xml-parser": "^5.11.1",
     "mermaid": "^11.17.2",
     "zod": "^4.6.5"
