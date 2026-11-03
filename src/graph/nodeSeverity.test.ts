@@ -36,3 +36,24 @@ test("repo sem nenhuma edge tocando ele é ok", () => {
   const edges = [edge({ id: "e1", source: "a", target: "b", type: "published_artifact_dependency" })];
   assert.equal(severityOf(edges, "z"), "ok");
 });
+
+// brokenRepoIds (2026-11): um repositório com um LocalFinding `blocksStartup: true` (ex: Spring
+// Boot sem @SpringBootApplication) precisa aparecer BROKEN (vermelho) mesmo sem nenhuma edge sua
+// tendo esse status — as edges que tocam ele viram "impacted" pela cascata (ver cascadeImpact.ts),
+// não "broken"; sem passar brokenRepoIds aqui também, o PRÓPRIO repo apareceria só impacted/laranja,
+// como se o problema fosse de outra pessoa, não dele mesmo.
+test("brokenRepoIds marca o repositório como broken mesmo com todas as edges dele active", () => {
+  const edges = [edge({ id: "e1", source: "order-service", target: "svc_topic", type: "queue_publish" })];
+  assert.equal(severityOf(edges, "order-service", ["order-service"]), "broken");
+});
+
+test("brokenRepoIds vence 'impacted' calculado a partir das edges (broken > impacted no rank)", () => {
+  const edges = [edge({ id: "e1", source: "order-service", target: "svc_topic", type: "queue_publish", status: "impacted" })];
+  const severities = computeNodeSeverities(edges, ["order-service"]);
+  assert.equal(severities.get("order-service"), "broken");
+});
+
+test("brokenRepoIds não afeta repositório que não está na lista", () => {
+  const edges = [edge({ id: "e1", source: "order-service", target: "shipping-service", type: "outbound_http" })];
+  assert.equal(severityOf(edges, "shipping-service", ["order-service"]), "ok");
+});

@@ -5,6 +5,7 @@ import { DEFAULT_VAULT_PATH } from "../config/vaultConfig.js";
 import { runImpactCheck } from "../impact/impactCheck.js";
 import type { ImpactDiff } from "../impact/diffEngine.js";
 import { annotateAffectedNotes, writeImpactReport } from "../obsidian/obsidianWriter.js";
+import { buildRepoFileSlugMap } from "../obsidian/repoFileSlug.js";
 
 /** Recalcula o diff sem persistir snapshot novo — usado só quando o chamador não passou um diff pronto. */
 function computeReadOnlyDiff(configPath: string | undefined, repoId: string): ImpactDiff {
@@ -53,9 +54,18 @@ export interface GenerateImpactReportResult {
  */
 export function runGenerateImpactReport(options: GenerateImpactReportOptions): GenerateImpactReportResult {
   const resolvedDiff = coerceDiff(options.diff) ?? computeReadOnlyDiff(options.configPath, options.repoId);
-  const resolvedVaultPath = options.vaultPath ?? loadGroupConfig(options.configPath).vaultPath ?? DEFAULT_VAULT_PATH;
+  const config = loadGroupConfig(options.configPath);
+  const resolvedVaultPath = options.vaultPath ?? config.vaultPath ?? DEFAULT_VAULT_PATH;
+  // Mesmo mapa repoId -> nome de arquivo que update_obsidian_graph usa (ver repoFileSlug.ts) — pros
+  // links de "repos impactados"/"blast radius" deste relatório apontarem pro arquivo certo, não pro
+  // repoId cru, quando displayName/maxRepoNameLength estiverem configurados.
+  const repoFileSlugById = buildRepoFileSlugMap(
+    config.repos.map((repo) => repo.id),
+    config.repos,
+    config.maxRepoNameLength,
+  );
 
-  const reportPath = writeImpactReport(resolvedVaultPath, resolvedDiff);
+  const reportPath = writeImpactReport(resolvedVaultPath, resolvedDiff, repoFileSlugById);
   const notesUpdated = annotateAffectedNotes(resolvedVaultPath, resolvedDiff);
 
   return { reportPath, notesUpdated };

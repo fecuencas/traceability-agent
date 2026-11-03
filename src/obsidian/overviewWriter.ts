@@ -3,7 +3,7 @@ import path from "node:path";
 import { analyzeGroup } from "../config/groupAnalysis.js";
 import { listRegisteredGroups, removeGroupFromRegistry } from "../config/groupConfig.js";
 import { DEFAULT_VAULT_PATH } from "../config/vaultConfig.js";
-import { applyCascadingImpact } from "../graph/cascadeImpact.js";
+import { applyCascadingImpact, brokenStartupRepoIds } from "../graph/cascadeImpact.js";
 import { findConnectedComponents } from "../graph/connectedComponents.js";
 import { loadRenderBaseline } from "../graph/graphSnapshot.js";
 import { flagContractSchemaWarnings } from "../graph/contractSchemaWarnings.js";
@@ -61,9 +61,11 @@ function scanAllGroups(vaultPath: string): { groups: GroupSummary[]; diagramGrou
     const currentServiceIds = new Set(snapshot.serviceNodes.map((node) => node.id));
     const missingServiceNodes = reconstructMissingServiceNodes(vaultPath, config.groupId, currentServiceIds);
     const allServiceNodes = [...snapshot.serviceNodes, ...missingServiceNodes];
+    const brokenRepoIds = brokenStartupRepoIds(snapshot.repos);
     const allEdges = applyCascadingImpact(
       [...snapshot.edges, ...removedEdges],
       snapshot.repos.map((repo) => repo.repoId),
+      brokenRepoIds,
     );
 
     groups.push({
@@ -71,6 +73,7 @@ function scanAllGroups(vaultPath: string): { groups: GroupSummary[]; diagramGrou
       repos: snapshot.repos.map((repo) => ({ repoId: repo.repoId, language: repo.language })),
       serviceNodes: allServiceNodes,
       edges: allEdges,
+      brokenRepoIds,
     });
 
     const repoIds = snapshot.repos.map((repo) => repo.repoId);
@@ -82,6 +85,7 @@ function scanAllGroups(vaultPath: string): { groups: GroupSummary[]; diagramGrou
         repos: snapshot.repos.map((repo) => ({ repoId: repo.repoId, language: repo.language })),
         serviceNodes: allServiceNodes,
         edges: allEdges,
+        brokenRepoIds,
       });
       continue;
     }
@@ -101,6 +105,7 @@ function scanAllGroups(vaultPath: string): { groups: GroupSummary[]; diagramGrou
           .map((id) => serviceNodesById.get(id))
           .filter((node) => node !== undefined),
         edges: component.edges,
+        brokenRepoIds,
       });
     });
   }

@@ -91,3 +91,36 @@ test("mudança de versão sem quebra vira versionChangeAwareness, não blastRadi
   assert.equal(diff.versionChangeAwareness.length, 1);
   assert.deepEqual(diff.versionChangeAwareness[0].dependentsToNotify, ["payment-processor"]);
 });
+
+// Cenário real pedido por usuário: "se o Spring Boot não inicializa, isso aparece no blast radius de
+// analyze_impact?" — precisa aparecer mesmo sem NENHUMA mudança de edge entre os dois snapshots
+// (changes = []), porque o próprio `LocalFinding.blocksStartup: true` já é, sozinho, motivo pra
+// quem depende do repo (via edge de dependência ativa) entrar no blast radius.
+test("blastRadius inclui quem depende de um repo com LocalFinding blocksStartup:true, mesmo sem nenhuma edge ter mudado", () => {
+  const orderServiceWithFinding: RepoAnalysisResult = {
+    ...repo("order-service"),
+    localFindings: [
+      {
+        id: "spring-boot.missing-bootstrap-annotation:x.java:7",
+        severity: "error",
+        category: "spring-boot.missing-bootstrap-annotation",
+        message: "A classe X sobe o ApplicationContext mas não tem @SpringBootApplication.",
+        evidence: { file: "src/main/java/X.java", line: 7, snippet: "SpringApplication.run(X.class, args);" },
+        blocksStartup: true,
+      },
+    ],
+  };
+  const edges = [edge({ id: "e1", source: "shipping-service", target: "order-service", type: "outbound_http" })];
+  const current: GraphSnapshot = {
+    group: "test-group",
+    generatedAt: new Date(0).toISOString(),
+    repos: [orderServiceWithFinding, repo("shipping-service")],
+    edges,
+    serviceNodes: [],
+  };
+
+  const diff = diffGraphs("order-service", current, current); // "previous" === "current": zero mudanças de edge
+
+  assert.deepEqual(diff.changes, []);
+  assert.ok(diff.blastRadius.includes("shipping-service"), "shipping-service depende de order-service via outbound_http e deveria entrar no blast radius");
+});

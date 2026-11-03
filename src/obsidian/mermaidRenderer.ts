@@ -34,12 +34,23 @@ export function escapeMermaidLabel(value: string): string {
 export interface GraphRenderContext {
   languageByRepoId: Map<string, Language>;
   serviceNodesById: Map<string, ServiceNode>;
+  /** `repoId -> nome de arquivo` (ver `obsidian/repoFileSlug.ts`) — usado só por `noteTemplates.ts`
+   * pra montar o CAMINHO dos wikilinks de repositório (o texto exibido continua sendo o `repoId`
+   * completo). Os diagramas Mermaid deste arquivo NUNCA usam isso: o nó sempre mostra o `repoId`
+   * completo, de propósito (truncar aqui faria o diagrama perder informação real; o problema que
+   * este mapa resolve é só o Graph View NATIVO do Obsidian, que rotula pelo nome do arquivo). */
+  repoFileSlugById: Map<string, string>;
 }
 
-export function buildRenderContext(repos: RepoAnalysisResult[], serviceNodes: ServiceNode[]): GraphRenderContext {
+export function buildRenderContext(
+  repos: RepoAnalysisResult[],
+  serviceNodes: ServiceNode[],
+  repoFileSlugById: Map<string, string> = new Map(),
+): GraphRenderContext {
   return {
     languageByRepoId: new Map(repos.map((repo) => [repo.repoId, repo.language])),
     serviceNodesById: new Map(serviceNodes.map((node) => [node.id, node])),
+    repoFileSlugById,
   };
 }
 
@@ -110,7 +121,7 @@ function edgeLabel(edge: GraphEdge): string {
               ? " (schema mudou)"
               : " (versão mudou)"
             : "";
-  return `${EDGE_LABELS[edge.type].slug}${versionSuffix}${statusSuffix}`;
+  return `${EDGE_LABELS[edge.type].emoji} ${EDGE_LABELS[edge.type].slug}${versionSuffix}${statusSuffix}`;
 }
 
 /** Estilo da linha no Mermaid: verde/vermelho por status, mais tracejado quando a integração sumiu da varredura. */
@@ -124,8 +135,9 @@ function edgeLinkStyle(edge: GraphEdge): string {
 function splitBySeverity(
   edges: GraphEdge[],
   toDiagramId: (repoId: string) => string,
+  brokenRepoIds: Iterable<string> = [],
 ): { brokenIds: Set<string>; impactedIds: Set<string>; warningIds: Set<string> } {
-  const severities = computeNodeSeverities(edges);
+  const severities = computeNodeSeverities(edges, brokenRepoIds);
   const brokenIds = new Set<string>();
   const impactedIds = new Set<string>();
   const warningIds = new Set<string>();
@@ -169,6 +181,10 @@ export interface MermaidGraphOptions extends NodeLabelOptions {
    * de farol (verde/amarelo/vermelho) em vez de deixar o estado saudável sem nenhuma cor. Usado só
    * pelo relatório HTML por enquanto; as notas do Obsidian continuam sem essa cor de base. */
   colorHealthyNodes?: boolean;
+  /** Repositórios que devem aparecer vermelhos (`broken`) independente de qualquer edge tocando
+   * eles — hoje só um `LocalFinding` com `blocksStartup: true` (ex: Spring Boot sem
+   * `@SpringBootApplication`) alimenta isso. Ver `nodeSeverity.ts`. */
+  brokenRepoIds?: string[];
 }
 
 export function renderMermaidGraph(
@@ -201,7 +217,11 @@ export function renderMermaidGraph(
     linkStyles.push(`    linkStyle ${index} ${edgeLinkStyle(edge)}`);
   });
 
-  const { brokenIds, impactedIds, warningIds } = splitBySeverity(edges, sanitizeId);
+  // Mesmo cuidado do ego-graph: só repassa brokenRepoIds que são efetivamente nós declarados NESTE
+  // diagrama (evita um id "broken" de outro grupo/diagrama virar uma diretiva `class` Mermaid
+  // referenciando um nó nunca declarado aqui).
+  const relevantBrokenRepoIds = (options.brokenRepoIds ?? []).filter((id) => repoIds.includes(id));
+  const { brokenIds, impactedIds, warningIds } = splitBySeverity(edges, sanitizeId, relevantBrokenRepoIds);
 
   const healthyClassLines: string[] = [];
   if (options.colorHealthyNodes) {
@@ -303,7 +323,12 @@ export function renderEgoGraph(
     edgeIndex++;
   }
 
-  const { brokenIds, impactedIds, warningIds } = splitBySeverity([...incoming, ...outgoing], sanitizeId);
+  // Restringe aos ids REALMENTE declarados neste ego-graph (self + vizinhos diretos) — passar a
+  // lista global sem filtrar faria um repositório `broken` por achado local, mas que não é vizinho
+  // DESTE repo, acabar referenciado numa diretiva `class` do Mermaid sem nunca ter sido declarado
+  // como nó aqui (o Mermaid cria um nó vazio implícito pra qualquer id referenciado em `class`).
+  const relevantBrokenRepoIds = (options.brokenRepoIds ?? []).filter((id) => declared.has(id));
+  const { brokenIds, impactedIds, warningIds } = splitBySeverity([...incoming, ...outgoing], sanitizeId, relevantBrokenRepoIds);
 
   const healthyClassLines: string[] = [];
   if (options.colorHealthyNodes) {
@@ -341,6 +366,9 @@ export interface OverviewGroup {
   repos: Array<{ repoId: string; language: Language }>;
   serviceNodes: ServiceNode[];
   edges: GraphEdge[];
+  /** Repositórios DESTE grupo que devem aparecer vermelhos independente de qualquer edge (ex: um
+   * `LocalFinding` com `blocksStartup: true`) — ver `MermaidGraphOptions.brokenRepoIds`. */
+  brokenRepoIds?: string[];
 }
 
 /**
@@ -388,7 +416,11 @@ export function renderOverviewGraph(groups: OverviewGroup[], options: MermaidGra
       edgeIndex++;
     }
     lines.push("    end");
-    const { brokenIds, impactedIds, warningIds } = splitBySeverity(group.edges, toDiagramId);
+    // Mesmo cuidado dos outros dois renderers: só repassa brokenRepoIds que pertencem a ESTE grupo
+    // (evita um id referenciando um nó nunca declarado dentro desta subgraph específica).
+    const groupRepoIds = new Set(group.repos.map((repo) => repo.repoId));
+    const relevantBrokenRepoIds = (group.brokenRepoIds ?? []).filter((id) => groupRepoIds.has(id));
+    const { brokenIds, impactedIds, warningIds } = splitBySeverity(group.edges, toDiagramId, relevantBrokenRepoIds);
     for (const id of brokenIds) allBrokenIds.add(id);
     for (const id of impactedIds) allImpactedIds.add(id);
     for (const id of warningIds) allWarningIds.add(id);

@@ -3,8 +3,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
+import type { GroupRepoConfig } from "../config/groupConfig.js";
 import type { RepoAnalysisResult } from "../adapters/types.js";
-import type { GraphSnapshot } from "../graph/types.js";
+import type { GraphEdge, GraphSnapshot } from "../graph/types.js";
 import { writeGraphToVault } from "./obsidianWriter.js";
 
 function makeRepo(repoId: string): RepoAnalysisResult {
@@ -110,6 +111,89 @@ test("nota com frontmatter de outro grupo, plantada manualmente na subpasta cert
   assert.equal(result.collisions.length, 1);
   assert.match(result.collisions[0], /order-service/);
   assert.equal(fs.readFileSync(filePath, "utf8"), '---\ngroup: "outro-grupo-qualquer"\n---\nconteúdo manual');
+
+  fs.rmSync(vaultPath, { recursive: true, force: true });
+});
+
+function edge(overrides: Partial<GraphEdge> & Pick<GraphEdge, "id" | "source" | "target" | "type">): GraphEdge {
+  return {
+    confidence: "high",
+    detectorId: "test",
+    evidence: { file: "test.txt", snippet: "" },
+    status: "active",
+    ...overrides,
+  };
+}
+
+// Pedido real de usuário: repos com nome corporativo muito longo deixam os nós do Graph View
+// NATIVO do Obsidian (que rotula pelo nome do ARQUIVO, não por nenhum alias) enormes/ilegíveis.
+// `maxRepoNameLength` resolve isso truncando só o nome do arquivo — repoId completo continua em
+// todo o resto (frontmatter, conteúdo, diagramas Mermaid).
+test("maxRepoNameLength trunca o nome do ARQUIVO da nota, mas repoId completo continua no frontmatter/conteúdo", () => {
+  const vaultPath = fs.mkdtempSync(path.join(os.tmpdir(), "vault-"));
+  const longRepoId = "acme-platform-payments-checkout-service";
+  const repoConfigs: GroupRepoConfig[] = [{ id: longRepoId, coordinates: [] }];
+
+  const result = writeGraphToVault(vaultPath, makeSnapshot("sistema-a", longRepoId), repoConfigs, 20);
+
+  const truncatedFiles = fs.readdirSync(path.join(vaultPath, "Repos", "sistema-a"));
+  assert.equal(truncatedFiles.length, 1);
+  const [fileName] = truncatedFiles;
+  assert.notEqual(fileName, `${longRepoId}.md`, "o arquivo não deveria usar o repoId completo");
+  assert.ok(fileName.startsWith(longRepoId.slice(0, 20)), "o arquivo deveria começar com o prefixo truncado");
+  assert.ok(result.filesWritten.some((f) => f.endsWith(fileName)));
+
+  const content = fs.readFileSync(path.join(vaultPath, "Repos", "sistema-a", fileName), "utf8");
+  assert.ok(content.includes(`repoId: "${longRepoId}"`), "o frontmatter deveria manter o repoId completo");
+  assert.ok(content.includes(`# 🟢 ${longRepoId}`), "o heading da nota deveria manter o repoId completo");
+
+  fs.rmSync(vaultPath, { recursive: true, force: true });
+});
+
+test("displayName explícito grava a nota direto com esse nome de arquivo", () => {
+  const vaultPath = fs.mkdtempSync(path.join(os.tmpdir(), "vault-"));
+  const longRepoId = "acme-platform-payments-checkout-service";
+  const repoConfigs: GroupRepoConfig[] = [{ id: longRepoId, coordinates: [], displayName: "checkout" }];
+
+  writeGraphToVault(vaultPath, makeSnapshot("sistema-a", longRepoId), repoConfigs);
+
+  const filePath = path.join(vaultPath, "Repos", "sistema-a", "checkout.md");
+  assert.ok(fs.existsSync(filePath), "a nota deveria estar em Repos/sistema-a/checkout.md");
+  const content = fs.readFileSync(filePath, "utf8");
+  assert.ok(content.includes(`repoId: "${longRepoId}"`));
+
+  fs.rmSync(vaultPath, { recursive: true, force: true });
+});
+
+// O wikilink precisa apontar pro ARQUIVO certo (o slug, senão o link fica "unresolved" no
+// Obsidian), mas continuar EXIBINDO o repoId completo como texto — só o Graph View nativo (que lê
+// o nome do arquivo, não o alias do link) é afetado pelo encurtamento.
+test("wikilink de uma integração aponta pro arquivo com nome truncado, mas exibe o repoId completo como texto", () => {
+  const vaultPath = fs.mkdtempSync(path.join(os.tmpdir(), "vault-"));
+  const longRepoId = "acme-platform-payments-checkout-service";
+  const repoConfigs: GroupRepoConfig[] = [{ id: longRepoId, coordinates: [] }, { id: "shipping-service", coordinates: [] }];
+  const snapshot: GraphSnapshot = {
+    group: "sistema-a",
+    generatedAt: new Date(0).toISOString(),
+    repos: [makeRepo(longRepoId), makeRepo("shipping-service")],
+    edges: [edge({ id: "e1", source: "shipping-service", target: longRepoId, type: "outbound_http" })],
+    serviceNodes: [],
+  };
+
+  writeGraphToVault(vaultPath, snapshot, repoConfigs, 20);
+
+  // `renderIntegrationNote` (Integrations/sistema-a/e1.md) é quem efetivamente linka pro repo de
+  // ORIGEM/DESTINO de uma edge via `nodeLink`/`repoLink` — a nota do próprio repo (shipping-
+  // service.md) só linka pra INTEGRAÇÃO em si (edge.id), não direto pro outro repo.
+  const integrationNote = fs.readFileSync(path.join(vaultPath, "Integrations", "sistema-a", "e1.md"), "utf8");
+  const truncatedSlug = fs.readdirSync(path.join(vaultPath, "Repos", "sistema-a")).find((f) => f !== "shipping-service.md");
+  assert.ok(truncatedSlug);
+  const slugWithoutExt = truncatedSlug!.replace(/\.md$/, "");
+
+  assert.ok(
+    integrationNote.includes(`[[Repos/sistema-a/${slugWithoutExt}|${longRepoId}]]`),
+    "o wikilink pro repo de destino deveria apontar pro arquivo truncado mas exibir o repoId completo como alias",
+  );
 
   fs.rmSync(vaultPath, { recursive: true, force: true });
 });

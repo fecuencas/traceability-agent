@@ -1,5 +1,5 @@
 import type { IntegrationSignalType } from "../adapters/types.js";
-import { applyCascadingImpact, isDependencyEdge } from "../graph/cascadeImpact.js";
+import { applyCascadingImpact, brokenStartupRepoIds, isDependencyEdge } from "../graph/cascadeImpact.js";
 import type { GraphEdge, GraphSnapshot } from "../graph/types.js";
 
 export type EdgeChangeStatus = "unchanged" | "added" | "removed" | "modified";
@@ -63,9 +63,15 @@ function reconstructRemovedEdges(changes: EdgeDiffEntry[]): GraphEdge[] {
  * o relatório de impacto omitir repos realmente afetados a jusante de uma integração removida, e
  * listar repos não afetados só por estarem conectados de qualquer jeito no grafo).
  */
-function computeBlastRadius(repoId: string, currentEdges: GraphEdge[], changes: EdgeDiffEntry[], repoIds: string[]): string[] {
+function computeBlastRadius(
+  repoId: string,
+  currentEdges: GraphEdge[],
+  changes: EdgeDiffEntry[],
+  repoIds: string[],
+  brokenRepoIds: string[],
+): string[] {
   const edgesWithRemoved = [...currentEdges, ...reconstructRemovedEdges(changes)];
-  const withCascade = applyCascadingImpact(edgesWithRemoved, repoIds);
+  const withCascade = applyCascadingImpact(edgesWithRemoved, repoIds, brokenRepoIds);
 
   const affected = new Set<string>();
   for (const edge of withCascade) {
@@ -201,6 +207,7 @@ export function diffGraphs(repoId: string, previous: GraphSnapshot | undefined, 
       current.edges,
       changes,
       current.repos.map((repo) => repo.repoId),
+      brokenStartupRepoIds(current.repos),
     ),
     versionChangeAwareness: computeVersionChangeAwareness(relevantChanges, current.edges),
   };
