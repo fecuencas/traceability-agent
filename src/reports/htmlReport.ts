@@ -2,11 +2,13 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { ACTIVE_HEX_COLOR, BROKEN_HEX_COLOR, IMPACTED_HEX_COLOR, TYPE_HEX_COLORS, WARNING_HEX_COLOR } from "../graph/colorPalette.js";
+import { brokenStartupRepoIds } from "../graph/cascadeImpact.js";
 import { findConnectedComponents } from "../graph/connectedComponents.js";
 import { DIFF_HIGHLIGHT_END, DIFF_HIGHLIGHT_START } from "../graph/contractSignature.js";
 import { EDGE_LABELS } from "../graph/edgeLabels.js";
 import type { GraphEdge, GraphSnapshot } from "../graph/types.js";
 import { buildRenderContext, renderMermaidGraph } from "../obsidian/mermaidRenderer.js";
+import type { LocalFinding } from "../adapters/types.js";
 
 /**
  * Lê o bundle UMD minificado do Mermaid.js (`node_modules/mermaid/dist/mermaid.min.js`) pra embutir
@@ -78,7 +80,7 @@ function statusChip(edge: GraphEdge): string {
 }
 
 function typeChip(edge: GraphEdge): string {
-  return `<span class="chip chip-type" style="--chip-color:${TYPE_HEX_COLORS[edge.type]}">${escapeHtml(
+  return `<span class="chip chip-type" style="--chip-color:${TYPE_HEX_COLORS[edge.type]}">${EDGE_LABELS[edge.type].emoji} ${escapeHtml(
     EDGE_LABELS[edge.type].label,
   )}</span>`;
 }
@@ -228,13 +230,56 @@ function renderLegend(): string {
   <div class="legend"><span class="legend-group-label">Nós:</span>${nodeSeverityItems.join("\n")}</div>`;
 }
 
+/**
+ * Achados de saúde LOCAL de um repositório (`LocalFinding` — ver `adapters/types.ts`), separados dos
+ * "Problemas encontrados" acima de propósito: não são uma integração ENTRE repositórios, não
+ * participam do cálculo de cascata/status de aresta — hoje só a checagem de wiring do Spring Boot
+ * usa isso (classe principal sem `@SpringBootApplication`, `@Bean` fora de uma classe
+ * `@Configuration`, bean fora do pacote coberto pelo component-scan).
+ */
+function renderLocalFindings(repos: GraphSnapshot["repos"]): string {
+  const entries = repos.flatMap((repo) => (repo.localFindings ?? []).map((finding) => ({ repoId: repo.repoId, finding })));
+  if (entries.length === 0) {
+    return `<div class="empty-state empty-state-ok">Nenhum achado de saúde local (ex: wiring do Spring Boot) nesta análise.</div>`;
+  }
+  return entries
+    .map(({ repoId, finding }) => {
+      const cardClass = finding.severity === "warning" ? " problem-card-warning" : "";
+      const chip =
+        finding.severity === "error"
+          ? `<span class="chip chip-danger">erro</span>`
+          : `<span class="chip chip-warning">aviso</span>`;
+      const evidence = `<div class="problem-evidence">
+          <span class="muted mono">${escapeHtml(repoId)} · ${escapeHtml(finding.evidence.file)}${finding.evidence.line ? `:${finding.evidence.line}` : ""}</span>
+          ${finding.evidence.snippet ? `<pre>${escapeHtml(finding.evidence.snippet)}</pre>` : ""}
+        </div>`;
+      return `<article class="problem-card${cardClass}">
+        <header>
+          <span class="problem-path">${escapeHtml(repoId)}</span>
+          ${chip}
+        </header>
+        <p class="problem-reason">${escapeHtml(finding.message)}</p>
+        ${evidence}
+      </article>`;
+    })
+    .join("\n");
+}
+
 export function renderHtmlReport(snapshot: GraphSnapshot): string {
   const brokenCount = snapshot.edges.filter((edge) => edge.status === "broken").length;
   const impactedCount = snapshot.edges.filter((edge) => edge.status === "impacted").length;
   const removedCount = snapshot.edges.filter((edge) => edge.status === "removed").length;
   const warningCount = snapshot.edges.filter((edge) => edge.status === "active" && edge.versionWarning).length;
   const healthyCount = snapshot.edges.filter((edge) => edge.status === "active").length;
-  const problemCount = brokenCount + impactedCount + removedCount;
+  const localFindings: LocalFinding[] = snapshot.repos.flatMap((repo) => repo.localFindings ?? []);
+  const localErrorCount = localFindings.filter((f) => f.severity === "error").length;
+  const localWarningCount = localFindings.filter((f) => f.severity === "warning").length;
+  // Achado local (ex: classe principal do Spring Boot sem @SpringBootApplication) conta no pill
+  // geral igual uma integração quebrada — é uma quebra real, só que de escopo LOCAL a um repo (não
+  // cascateia pra outros), então fica de fora de `brokenCount`/`impactedCount`/etc (que são sobre
+  // ARESTAS do grafo) mas ainda precisa aparecer no resumo do topo, senão o relatório afirmaria
+  // "nenhum problema encontrado" com uma inicialização quebrada logo abaixo.
+  const problemCount = brokenCount + impactedCount + removedCount + localErrorCount;
   const statusPill =
     problemCount > 0
       ? `<span class="pill pill-danger">${problemCount} problema${problemCount > 1 ? "s" : ""} encontrado${problemCount > 1 ? "s" : ""}</span>`
@@ -246,6 +291,7 @@ export function renderHtmlReport(snapshot: GraphSnapshot): string {
   const repoIds = snapshot.repos.map((repo) => repo.repoId);
   const renderCtx = buildRenderContext(snapshot.repos, snapshot.serviceNodes);
   const mermaidScript = loadMermaidScript();
+  const brokenRepoIds = brokenStartupRepoIds(snapshot.repos);
 
   // Repositórios no mesmo grupo nem sempre têm relação real entre si — sem separar por componente
   // conectado, aplicações completamente independentes que só compartilham o mesmo config/pasta
@@ -258,7 +304,11 @@ export function renderHtmlReport(snapshot: GraphSnapshot): string {
       : "";
   const mermaidCards =
     components.length <= 1
-      ? renderMermaidCard(stripMermaidFence(renderMermaidGraph(repoIds, snapshot.edges, renderCtx, { showTypeLabel: true, colorHealthyNodes: true })))
+      ? renderMermaidCard(
+          stripMermaidFence(
+            renderMermaidGraph(repoIds, snapshot.edges, renderCtx, { showTypeLabel: true, colorHealthyNodes: true, brokenRepoIds }),
+          ),
+        )
       : components
           .map((component, index) =>
             renderMermaidCard(
@@ -266,6 +316,7 @@ export function renderHtmlReport(snapshot: GraphSnapshot): string {
                 renderMermaidGraph(component.repoIds, component.edges, renderCtx, {
                   showTypeLabel: true,
                   colorHealthyNodes: true,
+                  brokenRepoIds,
                 }),
               ),
               `Aplicação ${index + 1} — ${component.repoIds.length} repositório${component.repoIds.length === 1 ? "" : "s"}, ${component.edges.length} integraç${component.edges.length === 1 ? "ão" : "ões"}`,
@@ -608,6 +659,8 @@ export function renderHtmlReport(snapshot: GraphSnapshot): string {
         ${statTile("Removidas", removedCount, removedCount > 0 ? "danger" : "neutral")}
         ${statTile("Avisos de versão", warningCount, warningCount > 0 ? "warning" : "neutral")}
         ${statTile("Saudáveis", healthyCount, "success")}
+        ${statTile("Achados locais (erro)", localErrorCount, localErrorCount > 0 ? "danger" : "neutral")}
+        ${statTile("Achados locais (aviso)", localWarningCount, localWarningCount > 0 ? "warning" : "neutral")}
       </div>
     </section>
 
@@ -624,6 +677,12 @@ export function renderHtmlReport(snapshot: GraphSnapshot): string {
     <section>
       <h2>Problemas encontrados</h2>
       ${renderProblems(snapshot.edges)}
+    </section>
+
+    <section>
+      <h2>Achados locais (wiring de frameworks)</h2>
+      <p class="multi-app-note">Checagens de saúde DENTRO de um repositório, independentes de integração com outros — hoje cobre inicialização do Spring Boot (classe principal sem <span class="mono">@SpringBootApplication</span>, <span class="mono">@Bean</span> fora de uma classe <span class="mono">@Configuration</span>, bean fora do pacote coberto pelo component-scan).</p>
+      ${renderLocalFindings(snapshot.repos)}
     </section>
 
     <section>

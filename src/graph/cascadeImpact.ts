@@ -1,5 +1,15 @@
-import type { IntegrationSignalType } from "../adapters/types.js";
+import type { IntegrationSignalType, RepoAnalysisResult } from "../adapters/types.js";
 import type { GraphEdge } from "./types.js";
+
+/** Ids dos repositórios cujo `LocalFinding` diz que o repositório inteiro não sobe
+ * (`blocksStartup: true` — ver `adapters/types.ts`) — a lista que alimenta tanto `brokenRepoIds` de
+ * `applyCascadingImpact` abaixo quanto o mesmo parâmetro em `nodeSeverity.ts`/`mermaidRenderer.ts`.
+ * Centralizado aqui (em vez de cada chamador repetir o `.filter().some()`) porque os 4 lugares que
+ * chamam `applyCascadingImpact` (`generateHtmlReport.ts`, `obsidianWriter.ts`, `overviewWriter.ts`,
+ * `impact/diffEngine.ts`) precisam exatamente da mesma lista. */
+export function brokenStartupRepoIds(repos: RepoAnalysisResult[]): string[] {
+  return repos.filter((repo) => (repo.localFindings ?? []).some((finding) => finding.blocksStartup)).map((repo) => repo.repoId);
+}
 
 /**
  * Tipos de integração cuja semântica é "a origem DEPENDE do alvo" (artefato publicado, chamada
@@ -41,8 +51,20 @@ export function isDependencyEdge(edge: GraphEdge): boolean {
  * herdava o papel de origem, e o repo nunca disparava a cascata de dependência que o atinge). Um nó
  * de serviço nessa mesma posição NÃO vira origem adicional: a fila em si não está "quebrada" só
  * porque um consumidor específico parou de funcionar — os outros consumidores dela continuam OK.
+ *
+ * `brokenRepoIds` cobre o caso de um repositório estar quebrado sem NENHUMA edge dizendo isso — hoje
+ * só um `LocalFinding` com `blocksStartup: true` (ex: classe principal do Spring Boot sem
+ * `@SpringBootApplication` — o serviço inteiro nunca sobe) alimenta isso. Entram na mesma pilha de
+ * `origins` que a promoção de "outro extremo" acima já usa, então herdam exatamente a mesma
+ * propagação: pra frente via edges de fluxo (o serviço que nunca sobe não publica nada), pra trás
+ * via edges de dependência (quem chama esse serviço HTTP sofre) — sem precisar duplicar a lógica de
+ * BFS abaixo.
  */
-export function applyCascadingImpact(edges: GraphEdge[], repoIds: Iterable<string> = []): GraphEdge[] {
+export function applyCascadingImpact(
+  edges: GraphEdge[],
+  repoIds: Iterable<string> = [],
+  brokenRepoIds: Iterable<string> = [],
+): GraphEdge[] {
   const repoIdSet = new Set(repoIds);
   const outgoingByRepo = new Map<string, GraphEdge[]>();
   const incomingByRepo = new Map<string, GraphEdge[]>();
@@ -78,6 +100,7 @@ export function applyCascadingImpact(edges: GraphEdge[], repoIds: Iterable<strin
       if (repoIdSet.has(secondary)) origins.add(secondary);
     }
   }
+  for (const brokenRepoId of brokenRepoIds) origins.add(brokenRepoId);
 
   const visited = new Set<string>(origins);
   const queue: string[] = Array.from(origins);

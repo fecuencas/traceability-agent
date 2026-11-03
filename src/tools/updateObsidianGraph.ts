@@ -32,7 +32,7 @@ export function runUpdateObsidianGraph(options: UpdateObsidianGraphOptions): Upd
   snapshot.edges = flagVersionWarnings(snapshot.edges, previousBaseline);
   snapshot.edges = flagContractSchemaWarnings(snapshot.edges, previousBaseline);
   const resolvedVaultPath = options.vaultPath ?? config.vaultPath ?? DEFAULT_VAULT_PATH;
-  const result = writeGraphToVault(resolvedVaultPath, snapshot);
+  const result = writeGraphToVault(resolvedVaultPath, snapshot, config.repos, config.maxRepoNameLength);
   saveRenderBaseline(config.configPath, snapshot);
   recordGroupInRegistry(config.groupId, config.configPath, snapshot.generatedAt);
   const overview = writeOverviewToVault(resolvedVaultPath);

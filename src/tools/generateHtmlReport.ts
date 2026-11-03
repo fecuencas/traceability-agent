@@ -3,7 +3,7 @@ import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { analyzeGroup } from "../config/groupAnalysis.js";
 import { DEFAULT_VAULT_PATH } from "../config/vaultConfig.js";
-import { applyCascadingImpact } from "../graph/cascadeImpact.js";
+import { applyCascadingImpact, brokenStartupRepoIds } from "../graph/cascadeImpact.js";
 import { loadRenderBaseline, saveRenderBaseline } from "../graph/graphSnapshot.js";
 import { flagContractSchemaWarnings } from "../graph/contractSchemaWarnings.js";
 import { flagVersionWarnings } from "../graph/versionWarnings.js";
@@ -48,6 +48,7 @@ export function runGenerateHtmlReport(options: GenerateHtmlReportOptions): Gener
   snapshot.edges = applyCascadingImpact(
     [...snapshot.edges, ...removedEdges],
     snapshot.repos.map((repo) => repo.repoId),
+    brokenStartupRepoIds(snapshot.repos),
   );
   // Mesmo caso do writeGraphToVault: um recurso de infra pode sumir por completo da varredura
   // (não só a edge) — sem reconstruir o ServiceNode a partir da nota antiga, o relatório perde

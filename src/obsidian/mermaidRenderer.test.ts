@@ -152,3 +152,19 @@ test("coordenada de artefato maliciosa é escapada no ego-graph (nó externo nã
 
   assert.ok(!diagram.includes(`"${maliciousCoordinate}`), "a coordenada maliciosa não deveria fechar a aspa do label");
 });
+
+// Pedido real de usuário: diferenciar o TIPO de integração a olho nu na própria linha da aresta,
+// já que HTTP/contrato (sem fila no meio) não têm nenhum nó de serviço com ícone próprio — a linha
+// reta entre dois repos era só texto puro antes disso.
+test("rótulo da aresta inclui o emoji do TIPO de integração (ex: 🔌 pra chamada HTTP)", () => {
+  const orderService = makeRepo({ repoId: "order-service", language: "java" });
+  const inventoryService = makeRepo({ repoId: "inventory-service", language: "kotlin" });
+  const ctx = buildRenderContext([orderService, inventoryService], []);
+  const edges: GraphEdge[] = [
+    edge({ id: "e1", source: "order-service", target: "inventory-service", type: "outbound_http" }),
+  ];
+
+  const diagram = renderMermaidGraph(["order-service", "inventory-service"], edges, ctx);
+
+  assert.ok(diagram.includes('"🔌 calls-http"'), "o label da aresta deveria trazer o emoji de chamada HTTP junto do slug");
+});

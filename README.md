@@ -29,9 +29,23 @@ re-derives the graph from the real source code on every run, and flags exactly w
 - **"Something changed, might be worth a look."** A dependency version bumped, or a contract with
   no known consumer changed shape — surfaced as a distinct **warning**, not lumped in with real
   breaks, because the dependent side may keep working fine on the old version.
+- **Spring Boot wiring bugs** (Java/Kotlin repos that depend on `org.springframework.boot:*`): the
+  classic "forgot an annotation, context won't start" class of bug — a main class that calls
+  `SpringApplication.run()`/`runApplication()` without `@SpringBootApplication`, a class with
+  `@Bean` methods that itself isn't `@Configuration`, or a `@Service`/`@Component`/... class
+  sitting in a package the default component-scan never reaches. These are **local findings**
+  (scoped to one repository, not a cross-repo integration) — they never cascade to other repos'
+  status, but they do count toward the overall problem count in the HTML report and get their own
+  block on the repo's Obsidian note. Skips itself (no finding, ever) whenever it can't resolve
+  something with confidence — e.g. a custom `@ComponentScan` anywhere in the repo disables the
+  component-scan-package check entirely rather than risk a false positive.
 
 Four-state color coding runs consistently through every surface: 🟢 healthy · 🟡 warning (changed,
-not confirmed broken) · 🟠 cascading impact · 🔴 broken.
+not confirmed broken) · 🟠 cascading impact · 🔴 broken. Each **type** of integration also carries
+its own emoji wherever its label appears — 📦 artifact dependency, 🔌 HTTP call, 📤/📥 queue
+publish/consume, 📄 contract reference, ⚙️ configured endpoint — so a direct HTTP call and a
+contract reference are visually distinct at a glance even when there's no queue/infra node in
+between to carry its own icon.
 
 ## Screenshots
 
@@ -234,6 +248,42 @@ Beyond this fully-centralized form, a group can also be described from manifests
 publishes on its own (`manifestPath`/`manifestsDir`) — no need for every repo to be checked out on
 the same machine. See [`docs/decentralized-config.md`](docs/decentralized-config.md).
 
+### Shortening long repo names in Obsidian's native Graph View (opt-in)
+
+Obsidian's own Graph View (`Cmd+G`, the canvas with colored dots — as opposed to the Mermaid
+diagrams embedded in notes and the HTML report) always labels a node with the **file name** behind
+it, with no built-in way to truncate or alias that label. If your repos share a long naming
+convention (`acme-platform-payments-checkout-service`, say), every node there ends up that long —
+the Mermaid diagrams aren't affected (they always show the full repo id in the node text, on
+purpose) and need no configuration for this.
+
+Two independent, combinable knobs control the **file name** only — `repoId` itself stays
+unabbreviated everywhere else (frontmatter, note content, diagrams, the graph/cascade logic,
+snapshot diffing between scans):
+
+```json
+{
+  "groupId": "my-system",
+  "maxRepoNameLength": 24,
+  "repos": [
+    { "id": "acme-platform-payments-checkout-service", "path": "./checkout", "coordinates": ["..."] },
+    { "id": "acme-platform-payments-webhook-service", "path": "./webhook", "coordinates": ["..."], "displayName": "webhook" }
+  ]
+}
+```
+
+- **`maxRepoNameLength`** (group-level): any `repos[].id` longer than this is truncated to that
+  length and suffixed with a short, stable hash of the full id (e.g.
+  `acme-platform-payments-c-3f9a2b.md`) — the hash guarantees two ids that only diverge *after* the
+  cutoff (common with a shared long prefix) never collide on the same file, without a second pass
+  to detect duplicates.
+- **`repos[].displayName`** (per-repo, takes priority over `maxRepoNameLength` for that repo): pick
+  the file name yourself — same character rules as `id`. Use this where you want a specific,
+  memorable short name (`"webhook"` above) rather than an automatic truncation.
+
+Changing either between scans **renames** the note's file — the old file is left behind in the
+vault (not deleted automatically), same as changing `groupId`/`repoId` itself would.
+
 ### Tools exposed over MCP
 
 | Tool | What it does |
@@ -300,6 +350,7 @@ src/
 ├── reports/           # self-contained HTML report
 ├── impact/            # snapshot diffing, blast radius
 ├── testgen/           # regression test generation
+├── springboot/        # local (single-repo) findings: Spring Boot wiring/annotation checks
 └── config/            # project config + global registry resolution
 ```
 
@@ -314,8 +365,10 @@ Own test suite (`node:test`, no extra dependency), colocated with each module
 group-id collision, directional cascade propagation, blast radius, service-node dedup across
 cross-technology publishers/consumers, service nodes reconstructed when an infra resource
 disappears from a scan, regex false-positives on a stub's own declaration, the OpenAPI field-level
-diff described above, and a path-traversal attempt via a malicious `groupId`/`repoId` (config or
-manifest) rejected before it can write outside the vault.
+diff described above, a path-traversal attempt via a malicious `groupId`/`repoId` (config or
+manifest) rejected before it can write outside the vault, and the Spring Boot wiring checks (a
+real `@Value("${...:(default)}")`-style annotation value with parens/braces inside a string
+literal, which a naive brace-counting parser would misread as unbalanced).
 
 ## Security
 

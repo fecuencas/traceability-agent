@@ -53,6 +53,39 @@ export interface IntegrationSignal {
   version?: string;
 }
 
+/** `error` = quebra a inicialização do framework com alta confiança (ex: classe principal do Spring
+ * Boot sem `@SpringBootApplication` — o `ApplicationContext` nem sobe). `warning` = suspeito, mas
+ * sem certeza total (ex: bean fora do pacote de component-scan — depende de como o scan foi
+ * configurado em outro lugar do código, que o scanner nem sempre consegue resolver). */
+export type LocalFindingSeverity = "error" | "warning";
+
+/**
+ * Achado de saúde estrutural de UM repositório, independente de integração com outros repos do
+ * grupo (diferente de `IntegrationSignal`/`GraphEdge`, que são sempre sobre uma relação ENTRE
+ * repositórios). Hoje só a checagem de wiring do Spring Boot usa isso (ver `src/springboot/`), mas
+ * o tipo é genérico de propósito — `category` identifica o detector, não o framework.
+ */
+export interface LocalFinding {
+  /** Estável dentro do repositório (mesma categoria + mesma evidência -> mesmo id), pra permitir
+   * futuramente comparar entre scans (igual já se faz com edges) sem precisar disso agora. */
+  id: string;
+  severity: LocalFindingSeverity;
+  category: string;
+  message: string;
+  evidence: SignalEvidence;
+  /** true quando este achado específico significa que o repositório inteiro não sobe/não funciona
+   * (ex: classe principal do Spring Boot sem `@SpringBootApplication` — o `ApplicationContext` nem
+   * inicializa) — não apenas "um bean específico pode não existir". Usado pra alimentar a MESMA
+   * cascata de impacto que uma integração quebrada já dispara (`applyCascadingImpact` em
+   * `graph/cascadeImpact.ts`): quem depende deste repositório (chamada HTTP, artefato, contrato)
+   * fica `impacted`, e o próprio repositório aparece como `broken` nos diagramas/notas — sem isso,
+   * um serviço que nunca sobe apareceria "saudável" no grafo de integrações, só com um aviso de
+   * texto isolado na própria nota. Ausente/false pros achados mais pontuais (ex: um `@Bean`
+   * específico fora do ar, ou um bean fora do pacote de component-scan) — esses não têm confiança
+   * suficiente de que DERRUBAM o serviço inteiro, então não cascateiam. */
+  blocksStartup?: boolean;
+}
+
 export interface RepoAnalysisResult {
   repoId: string;
   repoPath: string;
@@ -62,6 +95,9 @@ export interface RepoAnalysisResult {
   scannedAt: string;
   commitSha?: string;
   signals: IntegrationSignal[];
+  /** Achados de saúde estrutural local (não-integração) — ver `LocalFinding`. Ausente/vazio quando
+   * nenhum detector local se aplica a este repositório (ex: não usa Spring Boot). */
+  localFindings?: LocalFinding[];
 }
 
 export interface LanguageAdapter {

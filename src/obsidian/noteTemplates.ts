@@ -1,4 +1,4 @@
-import type { RepoAnalysisResult } from "../adapters/types.js";
+import type { LocalFinding, RepoAnalysisResult } from "../adapters/types.js";
 import { BROKEN_HEX_COLOR, IMPACTED_HEX_COLOR, WARNING_HEX_COLOR } from "../graph/colorPalette.js";
 import { findConnectedComponents } from "../graph/connectedComponents.js";
 import { DIFF_HIGHLIGHT_END, DIFF_HIGHLIGHT_START } from "../graph/contractSignature.js";
@@ -31,8 +31,13 @@ function frontmatter(fields: Record<string, unknown>): string {
  * COMPLETO a partir da raiz do vault, com um alias (`|texto`) pra continuar exibindo só o id.
  * `Groups/<groupId>.md` fica de fora (não precisa, já é namespaced pelo próprio nome do arquivo).
  */
-function repoLink(groupId: string, repoId: string): string {
-  return `[[Repos/${groupId}/${repoId}|${repoId}]]`;
+/** `repoFileSlugById` resolve o nome de ARQUIVO (pode ser diferente de `repoId` — ver
+ * `obsidian/repoFileSlug.ts`), mas o texto exibido do link continua sendo o `repoId` completo:
+ * só o Graph View NATIVO do Obsidian (que rotula pelo nome do arquivo) enxerga a diferença; quem
+ * lê a nota continua vendo o nome real do repositório. */
+function repoLink(groupId: string, repoId: string, repoFileSlugById?: Map<string, string>): string {
+  const fileSlug = repoFileSlugById?.get(repoId) ?? repoId;
+  return `[[Repos/${groupId}/${fileSlug}|${repoId}]]`;
 }
 
 function serviceLink(groupId: string, serviceId: string, displayLabel?: string): string {
@@ -56,8 +61,8 @@ function isServiceNodeId(id: string): boolean {
   return id.startsWith("svc_");
 }
 
-function nodeLink(groupId: string, id: string): string {
-  return isServiceNodeId(id) ? serviceLink(groupId, id) : repoLink(groupId, id);
+function nodeLink(groupId: string, id: string, repoFileSlugById?: Map<string, string>): string {
+  return isServiceNodeId(id) ? serviceLink(groupId, id) : repoLink(groupId, id, repoFileSlugById);
 }
 
 /** Substitui os marcadores de destaque de `serializeFieldSignatureWithHighlight`
@@ -121,7 +126,7 @@ function edgeReasonColor(edge: GraphEdge): string {
  * o motivo, na cor mapeada na legenda — vermelho para quebra direta, laranja para impacto em
  * cascata, amarelo para aviso (algo mudou, ex: versão, sem quebra confirmada).
  */
-function renderRiskSummary(repoId: string, edges: GraphEdge[], groupId: string): string {
+function renderRiskSummary(repoId: string, edges: GraphEdge[], groupId: string, brokenRepoIds: string[] = []): string {
   // Filtra pra edges que realmente tocam este nó (origem ou destino) — sem isso, se o chamador
   // passar a lista completa de edges do snapshot (em vez de só as relacionadas a este nó), o
   // resumo lista integrações de QUALQUER lugar do grafo como se fossem deste nó, com a direção
@@ -137,12 +142,43 @@ function renderRiskSummary(repoId: string, edges: GraphEdge[], groupId: string):
     return `> - ${integrationLink(groupId, edge.id)} (${repoId} ${arrow} ${otherRepo}) — <span style="color:${edgeReasonColor(edge)}">${impactReason(edge)}</span>`;
   });
 
-  const nodeSeverity = severityOf(edges, repoId);
+  const nodeSeverity = severityOf(edges, repoId, brokenRepoIds);
   const headerColor =
     nodeSeverity === "impacted" ? IMPACTED_HEX_COLOR : nodeSeverity === "warning" ? WARNING_HEX_COLOR : BROKEN_HEX_COLOR;
   const count = impacted.length;
   return [
-    `> <span style="color:${headerColor}">⚠️ **${count} integração${count > 1 ? "ões" : ""} impactando este repositório**</span>`,
+    `> <span style="color:${headerColor}">⚠️ **${count} integraç${count === 1 ? "ão" : "ões"} impactando este repositório**</span>`,
+    ...lines,
+    "",
+  ].join("\n");
+}
+
+/**
+ * Achados de saúde LOCAL do repositório (`LocalFinding` — ver `adapters/types.ts`), separados de
+ * propósito do `renderRiskSummary` acima: não são uma integração entre repos, não participam do
+ * cascade/severidade de nó do grafo (`severityOf`) — um achado "error" aqui NUNCA deixa este repo
+ * laranja/vermelho no diagrama, só aparece neste bloco de texto. Mistura-los no mesmo cálculo exigiria
+ * tocar a lógica de cascata entre repos (testada e usada pra uma coisa bem diferente: propagação de
+ * quebra ENTRE repositórios) por um tipo de achado que é, por definição, local a um repositório só.
+ */
+function renderLocalFindings(findings: LocalFinding[] | undefined): string {
+  if (!findings || findings.length === 0) return "";
+  const errorCount = findings.filter((f) => f.severity === "error").length;
+  const warningCount = findings.length - errorCount;
+  const headerColor = errorCount > 0 ? BROKEN_HEX_COLOR : WARNING_HEX_COLOR;
+  const countLabel = [
+    errorCount > 0 ? `${errorCount} erro${errorCount > 1 ? "s" : ""}` : "",
+    warningCount > 0 ? `${warningCount} aviso${warningCount > 1 ? "s" : ""}` : "",
+  ]
+    .filter(Boolean)
+    .join(", ");
+  const lines = findings.map((finding) => {
+    const icon = finding.severity === "error" ? "🔴" : "🟡";
+    const location = `${finding.evidence.file}${finding.evidence.line ? `:${finding.evidence.line}` : ""}`;
+    return `> - ${icon} \`${location}\` — ${finding.message}`;
+  });
+  return [
+    `> <span style="color:${headerColor}">⚠️ **${countLabel} de saúde local neste repositório** (não afeta outros repositórios do grupo)</span>`,
     ...lines,
     "",
   ].join("\n");
@@ -154,19 +190,28 @@ export function renderRepoNote(
   outgoingEdges: GraphEdge[],
   incomingEdges: GraphEdge[],
   ctx: GraphRenderContext,
+  // Ids (de QUALQUER repositório do grupo, não só este) marcados broken por um LocalFinding com
+  // `blocksStartup: true` — precisa ser escopo de grupo (não só `repo.localFindings`) porque um
+  // VIZINHO quebrado também precisa aparecer vermelho na vizinhança (ego-graph) desta nota, não só
+  // a própria edge que o liga a ele ficando laranja. Ver `graph/cascadeImpact.ts`.
+  brokenRepoIds: string[] = [],
 ): string {
   const allEdges = [...outgoingEdges, ...incomingEdges];
   const hasBrokenIntegration = allEdges.some((edge) => edge.status === "broken");
   const hasRemovedIntegration = allEdges.some((edge) => edge.status === "removed");
   const hasCascadingImpact = allEdges.some((edge) => edge.status === "impacted");
   const hasVersionWarning = allEdges.some((edge) => edge.status === "active" && edge.versionWarning);
-  const severity = severityOf(allEdges, repo.repoId);
+  const severity = severityOf(allEdges, repo.repoId, brokenRepoIds);
+  const hasLocalFindingError = (repo.localFindings ?? []).some((f) => f.severity === "error");
+  const hasLocalFindingWarning = (repo.localFindings ?? []).some((f) => f.severity === "warning");
 
   const extraTags = [
     ...(hasBrokenIntegration ? ["has-broken-integration"] : []),
     ...(hasRemovedIntegration ? ["has-removed-integration"] : []),
     ...(hasCascadingImpact ? ["has-cascading-impact"] : []),
     ...(hasVersionWarning ? ["has-version-warning"] : []),
+    ...(hasLocalFindingError ? ["has-local-finding-error"] : []),
+    ...(hasLocalFindingWarning ? ["has-local-finding-warning"] : []),
     // Mesmo vocabulário de status usado nas notas de integração (broken/impacted/warning) e nos
     // colorGroups do Graph View — antes eram nomes próprios (at-risk/impacted-node) que exigiam
     // uma entrada de cor separada; "ok" cobre explicitamente o caso saudável, que antes não tinha
@@ -202,7 +247,7 @@ export function renderRepoNote(
             : edge.status === "active" && edge.versionWarning
               ? " 🟡"
               : "";
-    return `- ${integrationLink(groupId, edge.id)} (${EDGE_LABELS[edge.type].label})${marker}`;
+    return `- ${integrationLink(groupId, edge.id)} (${EDGE_LABELS[edge.type].emoji} ${EDGE_LABELS[edge.type].label})${marker}`;
   };
 
   const outgoingList = outgoingEdges.length ? outgoingEdges.map(renderEdgeLine).join("\n") : "(nenhuma detectada nesta versão)";
@@ -215,14 +260,15 @@ export function renderRepoNote(
     `# ${severityEmoji(severity)} ${repo.repoId}`,
     "",
     AUTO_GENERATED_START,
-    renderRiskSummary(repo.repoId, allEdges, groupId),
+    renderRiskSummary(repo.repoId, allEdges, groupId, brokenRepoIds),
+    renderLocalFindings(repo.localFindings),
     "## Grupo",
     groupLink(groupId),
     "",
     "## Vizinhança (visão micro)",
     "_Relações diretas deste repositório — internas ao grupo (linha colorida), nós de serviço de infra (hexágono) e externas/não resolvidas (linha tracejada cinza)._",
     "",
-    renderEgoGraph(repo, outgoingEdges, incomingEdges, ctx, { showTypeLabel: true, colorHealthyNodes: true }),
+    renderEgoGraph(repo, outgoingEdges, incomingEdges, ctx, { showTypeLabel: true, colorHealthyNodes: true, brokenRepoIds }),
     "",
     "## Integrações onde este repo é a ORIGEM",
     outgoingList,
@@ -246,6 +292,7 @@ export function renderServiceNote(
   groupId: string,
   edges: GraphEdge[],
   repoIds: Iterable<string> = [],
+  repoFileSlugById?: Map<string, string>,
 ): string {
   const relatedEdges = edges.filter((edge) => edge.source === node.id || edge.target === node.id);
   const severity = severityOf(edges, node.id);
@@ -291,7 +338,7 @@ export function renderServiceNote(
               : "";
     const otherId = edge.source === node.id ? edge.target : edge.source;
     const arrow = edge.source === node.id ? "→" : "←";
-    return `- ${integrationLink(groupId, edge.id)} (${EDGE_LABELS[edge.type].label}, ${arrow} ${repoLink(groupId, otherId)})${marker}`;
+    return `- ${integrationLink(groupId, edge.id)} (${EDGE_LABELS[edge.type].emoji} ${EDGE_LABELS[edge.type].label}, ${arrow} ${repoLink(groupId, otherId, repoFileSlugById)})${marker}`;
   };
 
   const edgeList = relatedEdges.length ? relatedEdges.map(renderEdgeLine).join("\n") : "(nenhuma integração detectada nesta versão)";
@@ -314,7 +361,7 @@ export function renderServiceNote(
     "",
     "## Repositórios relacionados",
     relatedRepoIds.length
-      ? relatedRepoIds.map((id) => `- ${repoLink(groupId, id)}`).join("\n")
+      ? relatedRepoIds.map((id) => `- ${repoLink(groupId, id, repoFileSlugById)}`).join("\n")
       : "(nenhum repositório do grupo associado nesta versão)",
     "",
     `**Tipo de serviço:** ${meta.label}`,
@@ -329,7 +376,12 @@ export function renderServiceNote(
   ].join("\n");
 }
 
-export function renderIntegrationNote(edge: GraphEdge, groupId: string, generatedAt: string): string {
+export function renderIntegrationNote(
+  edge: GraphEdge,
+  groupId: string,
+  generatedAt: string,
+  repoFileSlugById?: Map<string, string>,
+): string {
   const isImpacted = edge.status !== "active";
   const hasVersionWarning = edge.status === "active" && Boolean(edge.versionWarning);
   const front = frontmatter({
@@ -353,7 +405,7 @@ export function renderIntegrationNote(edge: GraphEdge, groupId: string, generate
         : ["integration", edge.type, "ok", groupId],
   });
 
-  const label = EDGE_LABELS[edge.type].label;
+  const label = `${EDGE_LABELS[edge.type].emoji} ${EDGE_LABELS[edge.type].label}`;
   const lineInfo = edge.evidence.line ? ` (linha ${edge.evidence.line})` : "";
   const impactHeading =
     edge.status === "broken"
@@ -380,10 +432,10 @@ export function renderIntegrationNote(edge: GraphEdge, groupId: string, generate
     edge.version ? `**Versão referenciada:** ${edge.version}` : "",
     "",
     "## Origem",
-    nodeLink(groupId, edge.source),
+    nodeLink(groupId, edge.source, repoFileSlugById),
     "",
     "## Destino",
-    nodeLink(groupId, edge.target),
+    nodeLink(groupId, edge.target, repoFileSlugById),
     "",
     "## Evidência",
     `Arquivo: \`${edge.evidence.file}\`${lineInfo}`,
@@ -414,14 +466,22 @@ function renderEdgeListItem(edge: GraphEdge, groupId: string): string {
   return `- ${integrationLink(groupId, edge.id)}${marker}`;
 }
 
-export function renderGroupNote(groupId: string, repoIds: string[], edges: GraphEdge[], ctx: GraphRenderContext): string {
+export function renderGroupNote(
+  groupId: string,
+  repoIds: string[],
+  edges: GraphEdge[],
+  ctx: GraphRenderContext,
+  brokenRepoIds: string[] = [],
+): string {
   const front = frontmatter({
     type: "group",
     groupId,
     tags: ["group", groupId],
   });
 
-  const repoList = repoIds.length ? repoIds.map((id) => `- ${repoLink(groupId, id)}`).join("\n") : "(nenhum repositório configurado)";
+  const repoList = repoIds.length
+    ? repoIds.map((id) => `- ${repoLink(groupId, id, ctx.repoFileSlugById)}`).join("\n")
+    : "(nenhum repositório configurado)";
 
   // Repositórios no mesmo grupo/pasta nem sempre têm relação real entre si — sem separar por
   // componente conectado, dois (ou mais) times/aplicações sem NENHUMA integração cruzada acabam
@@ -440,7 +500,7 @@ export function renderGroupNote(groupId: string, repoIds: string[], edges: Graph
           "## Diagrama de integrações",
           diagramIntro,
           "",
-          renderMermaidGraph(repoIds, edges, ctx, { showTypeLabel: true, colorHealthyNodes: true }),
+          renderMermaidGraph(repoIds, edges, ctx, { showTypeLabel: true, colorHealthyNodes: true, brokenRepoIds }),
           "",
           "## Integrações conhecidas",
           edges.length ? edges.map((edge) => renderEdgeListItem(edge, groupId)).join("\n") : "(nenhuma integração detectada)",
@@ -452,9 +512,13 @@ export function renderGroupNote(groupId: string, repoIds: string[], edges: Graph
           "",
           ...components.flatMap((component, index) => [
             `### Aplicação ${index + 1} — ${component.repoIds.length} repositório${component.repoIds.length === 1 ? "" : "s"}, ${component.edges.length} integraç${component.edges.length === 1 ? "ão" : "ões"}`,
-            component.repoIds.map((id) => `- ${repoLink(groupId, id)}`).join("\n"),
+            component.repoIds.map((id) => `- ${repoLink(groupId, id, ctx.repoFileSlugById)}`).join("\n"),
             "",
-            renderMermaidGraph(component.repoIds, component.edges, ctx, { showTypeLabel: true, colorHealthyNodes: true }),
+            renderMermaidGraph(component.repoIds, component.edges, ctx, {
+              showTypeLabel: true,
+              colorHealthyNodes: true,
+              brokenRepoIds,
+            }),
             "",
             component.edges.length
               ? component.edges.map((edge) => renderEdgeListItem(edge, groupId)).join("\n")
@@ -476,13 +540,13 @@ export function renderGroupNote(groupId: string, repoIds: string[], edges: Graph
   ].join("\n");
 }
 
-function renderChangeEntry(diff: ImpactDiff, change: EdgeDiffEntry): string {
-  const label = EDGE_LABELS[change.type].label;
+function renderChangeEntry(diff: ImpactDiff, change: EdgeDiffEntry, repoFileSlugById?: Map<string, string>): string {
+  const label = `${EDGE_LABELS[change.type].emoji} ${EDGE_LABELS[change.type].label}`;
   const otherRepo = change.source === diff.repoId ? change.target : change.source;
   const role = change.source === diff.repoId ? "origem" : "alvo";
   const lines = [
     `- **${integrationLink(diff.group, change.edgeId)}** (${label}, ${diff.repoId} como ${role})`,
-    `  - Repo relacionado: ${nodeLink(diff.group, otherRepo)}`,
+    `  - Repo relacionado: ${nodeLink(diff.group, otherRepo, repoFileSlugById)}`,
   ];
   if (change.status === "modified") {
     lines.push(`  - Versão: \`${change.previousVersion ?? "?"}\` → \`${change.currentVersion ?? "?"}\``);
@@ -494,7 +558,7 @@ function renderChangeEntry(diff: ImpactDiff, change: EdgeDiffEntry): string {
   return lines.join("\n");
 }
 
-export function renderImpactReport(diff: ImpactDiff): string {
+export function renderImpactReport(diff: ImpactDiff, repoFileSlugById?: Map<string, string>): string {
   const front = frontmatter({
     type: "impact-report",
     repo: diff.repoId,
@@ -512,16 +576,18 @@ export function renderImpactReport(diff: ImpactDiff): string {
   if (added.length === 0 && modified.length === 0 && removed.length === 0) {
     sections.push("Nenhuma integração nova, removida ou modificada foi detectada para este repositório.", "");
   } else {
-    if (added.length) sections.push("## Adicionadas", added.map((c) => renderChangeEntry(diff, c)).join("\n"), "");
+    if (added.length)
+      sections.push("## Adicionadas", added.map((c) => renderChangeEntry(diff, c, repoFileSlugById)).join("\n"), "");
     if (modified.length)
-      sections.push("## Modificadas", modified.map((c) => renderChangeEntry(diff, c)).join("\n"), "");
-    if (removed.length) sections.push("## Removidas", removed.map((c) => renderChangeEntry(diff, c)).join("\n"), "");
+      sections.push("## Modificadas", modified.map((c) => renderChangeEntry(diff, c, repoFileSlugById)).join("\n"), "");
+    if (removed.length)
+      sections.push("## Removidas", removed.map((c) => renderChangeEntry(diff, c, repoFileSlugById)).join("\n"), "");
   }
 
   sections.push(
     "## Repos potencialmente impactados (blast radius)",
     diff.blastRadius.length
-      ? diff.blastRadius.map((id) => `- ${nodeLink(diff.group, id)}`).join("\n")
+      ? diff.blastRadius.map((id) => `- ${nodeLink(diff.group, id, repoFileSlugById)}`).join("\n")
       : "(nenhum outro repositório conectado)",
     "",
   );
@@ -538,7 +604,7 @@ export function renderImpactReport(diff: ImpactDiff): string {
         .map((entry) =>
           [
             `- **${integrationLink(diff.group, entry.edgeId)}** (\`${entry.previousVersion ?? "?"}\` → \`${entry.currentVersion ?? "?"}\`)`,
-            ...entry.dependentsToNotify.map((id) => `  - ${nodeLink(diff.group, id)}`),
+            ...entry.dependentsToNotify.map((id) => `  - ${nodeLink(diff.group, id, repoFileSlugById)}`),
           ].join("\n"),
         )
         .join("\n"),

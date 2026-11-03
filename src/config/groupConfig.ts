@@ -20,6 +20,15 @@ export interface GroupRepoConfig {
   coordinates: string[];
   /** Base URLs/hosts que este repo expõe — usado para resolver sinais outbound_http de outros repos do grupo. */
   endpoints?: string[];
+  /** Nome a usar no lugar de `id` para o ARQUIVO da nota deste repositório no vault (`Repos/<groupId>/
+   * <displayName>.md`) — e, por consequência, o que o Graph View NATIVO do Obsidian exibe (ele sempre
+   * usa o nome do arquivo, nunca um alias). `id` continua sendo usado em TODO o resto (frontmatter,
+   * conteúdo da nota, diagramas Mermaid, grafo/cascata, snapshot/diff entre scans) — só o nome do
+   * arquivo muda. Útil quando `id`/o nome real do repositório é muito longo (ex: convenção de nome
+   * corporativa) e deixa os nós do Graph View nativo enormes/ilegíveis. Validado com a mesma regra de
+   * `id` (vira nome de arquivo). Se não informado, usa `maxRepoNameLength` do grupo (abaixo) como
+   * fallback automático; sem nenhum dos dois, usa `id` sem alteração (comportamento de sempre). */
+  displayName?: string;
 }
 
 export interface GroupConfig {
@@ -38,12 +47,21 @@ export interface GroupConfig {
    * Só perde efeito se a tool receber `vaultPath` explícito na chamada (esse sempre vence). Relativo
    * ao diretório do config, como `path`/`manifestPath`. */
   vaultPath?: string;
+  /** Limite de caracteres (default: sem limite) para o nome do ARQUIVO de nota de repositório —
+   * qualquer `id` de repo mais longo que isso, sem `displayName` explícito, é truncado nesse tamanho
+   * e recebe um sufixo hash curto e estável (ex: "payments-platform-checkout-servi~a1b2c3.md") pra
+   * nunca colidir com outro repo cujo id só diverge DEPOIS do limite — comum quando todos os repos de
+   * uma empresa compartilham um prefixo longo. Só afeta o nome do arquivo/Graph View nativo; `id`
+   * completo continua em todo o resto (ver `GroupRepoConfig.displayName`, que tem prioridade sobre
+   * este limite quando ambos se aplicam ao mesmo repo). */
+  maxRepoNameLength?: number;
 }
 
 interface RawGroupConfig {
   groupId: string;
   repos: GroupRepoConfig[];
   manifestsDir?: string;
+  maxRepoNameLength?: number;
   vaultPath?: string;
 }
 
@@ -72,6 +90,7 @@ export function loadGroupConfig(configPath?: string): GroupConfig {
   assertSafeId(raw.groupId, `groupId em ${resolvedPath}`);
   for (const repo of raw.repos) {
     assertSafeId(repo.id, `repos[].id em ${resolvedPath}`);
+    if (repo.displayName !== undefined) assertSafeId(repo.displayName, `repos[].displayName do repositório "${repo.id}" em ${resolvedPath}`);
   }
   // resolvedPath = <projectRoot>/.traceability/config.json -> paths relativos são relativos a <projectRoot>,
   // não à própria pasta .traceability (senão "./order-service" resolveria para dentro de .traceability/).
@@ -88,6 +107,7 @@ export function loadGroupConfig(configPath?: string): GroupConfig {
     })),
     manifestsDir: raw.manifestsDir ? resolveRelative(raw.manifestsDir) : undefined,
     vaultPath: raw.vaultPath ? resolveRelative(raw.vaultPath) : undefined,
+    maxRepoNameLength: raw.maxRepoNameLength,
   };
 }
 

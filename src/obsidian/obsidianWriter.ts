@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { assertSafeId } from "../config/safeId.js";
-import { applyCascadingImpact } from "../graph/cascadeImpact.js";
+import { applyCascadingImpact, brokenStartupRepoIds } from "../graph/cascadeImpact.js";
 import type { GraphEdge, GraphSnapshot } from "../graph/types.js";
 import type { EdgeDiffEntry, ImpactDiff } from "../impact/diffEngine.js";
 import {
@@ -15,6 +15,8 @@ import {
 import { ensureGraphViewConfig } from "./graphViewConfig.js";
 import { buildRenderContext } from "./mermaidRenderer.js";
 import { listRemovedEdges, markIntegrationNoteRemoved, reconstructMissingServiceNodes } from "./removedEdgeDetector.js";
+import type { GroupRepoConfig } from "../config/groupConfig.js";
+import { buildRepoFileSlugMap } from "./repoFileSlug.js";
 import { extractFrontmatterGeneratedAt, writeCurrentAndArchivePrevious } from "./versionedReport.js";
 
 const VAULT_SUBFOLDERS = ["Groups", "Repos", "Services", "Integrations", "Reports"];
@@ -69,6 +71,8 @@ function writeMerged(filePath: string, generated: string, expectedGroup: string)
 export function writeGraphToVault(
   vaultPath: string,
   snapshot: GraphSnapshot,
+  repoConfigs: GroupRepoConfig[] = [],
+  maxRepoNameLength?: number,
 ): { filesWritten: string[]; collisions: string[] } {
   // Segunda camada de defesa (a primeira é `loadGroupConfig`/`readManifest` na leitura do
   // config/manifesto): groupId/repoId viram segmento de caminho abaixo — um valor tipo
@@ -102,9 +106,11 @@ export function writeGraphToVault(
   }
   // Impacto em cascata: qualquer edge ativa a jusante de uma broken/removed também fica "impacted"
   // (vermelho) — o alerta precisa alcançar até onde a mudança realmente se propaga, não só a edge quebrada.
+  const brokenRepoIds = brokenStartupRepoIds(snapshot.repos);
   const allEdges: GraphEdge[] = applyCascadingImpact(
     [...snapshot.edges, ...removedEdges],
     snapshot.repos.map((repo) => repo.repoId),
+    brokenRepoIds,
   );
   // Um recurso de infra pode desaparecer por completo da varredura (ex: bloco removido do
   // Terraform), não só a edge que o toca — sem reconstruir o ServiceNode a partir da nota antiga,
@@ -113,13 +119,24 @@ export function writeGraphToVault(
   const currentServiceIds = new Set(snapshot.serviceNodes.map((node) => node.id));
   const missingServiceNodes = reconstructMissingServiceNodes(vaultPath, snapshot.group, currentServiceIds);
   const allServiceNodes = [...snapshot.serviceNodes, ...missingServiceNodes];
-  const ctx = buildRenderContext(snapshot.repos, allServiceNodes);
+  // Nome de ARQUIVO (não de identidade — `repoId` continua intocado em todo o resto) de cada nota
+  // de repositório — só isso controla o rótulo que o Graph View NATIVO do Obsidian mostra (ver
+  // `repoFileSlug.ts`). Trocar `displayName`/`maxRepoNameLength` entre scans RENOMEIA a nota (o
+  // arquivo antigo fica órfão no vault, não é apagado automaticamente — mesma política de qualquer
+  // outro id que mude de forma neste agente).
+  const repoFileSlugById = buildRepoFileSlugMap(
+    snapshot.repos.map((repo) => repo.repoId),
+    repoConfigs,
+    maxRepoNameLength,
+  );
+  const ctx = buildRenderContext(snapshot.repos, allServiceNodes, repoFileSlugById);
 
   for (const repo of snapshot.repos) {
     const outgoing = allEdges.filter((edge) => edge.source === repo.repoId);
     const incoming = allEdges.filter((edge) => edge.target === repo.repoId);
-    const filePath = path.join(vaultPath, "Repos", snapshot.group, `${repo.repoId}.md`);
-    write(filePath, renderRepoNote(repo, snapshot.group, outgoing, incoming, ctx));
+    const fileSlug = repoFileSlugById.get(repo.repoId) ?? repo.repoId;
+    const filePath = path.join(vaultPath, "Repos", snapshot.group, `${fileSlug}.md`);
+    write(filePath, renderRepoNote(repo, snapshot.group, outgoing, incoming, ctx, brokenRepoIds));
   }
 
   // Sem essa nota, o wikilink pro nó de serviço (usado nas notas de integração onde ele é
@@ -134,13 +151,14 @@ export function writeGraphToVault(
         snapshot.group,
         allEdges,
         snapshot.repos.map((repo) => repo.repoId),
+        repoFileSlugById,
       ),
     );
   }
 
   for (const edge of allEdges.filter((edge) => edge.status !== "removed")) {
     const filePath = path.join(vaultPath, "Integrations", snapshot.group, `${edge.id}.md`);
-    write(filePath, renderIntegrationNote(edge, snapshot.group, snapshot.generatedAt));
+    write(filePath, renderIntegrationNote(edge, snapshot.group, snapshot.generatedAt, repoFileSlugById));
   }
   for (const removedEdge of removedEdges) {
     filesWritten.push(path.join(vaultPath, "Integrations", snapshot.group, `${removedEdge.id}.md`));
@@ -156,6 +174,7 @@ export function writeGraphToVault(
       snapshot.repos.map((repo) => repo.repoId),
       allEdges,
       ctx,
+      brokenRepoIds,
     ),
     "utf8",
   );
@@ -164,7 +183,7 @@ export function writeGraphToVault(
   return { filesWritten, collisions };
 }
 
-export function writeImpactReport(vaultPath: string, diff: ImpactDiff): string {
+export function writeImpactReport(vaultPath: string, diff: ImpactDiff, repoFileSlugById?: Map<string, string>): string {
   assertSafeId(diff.group, "groupId do diff");
   assertSafeId(diff.repoId, "repoId do diff");
   ensureVaultStructure(vaultPath);
@@ -172,7 +191,7 @@ export function writeImpactReport(vaultPath: string, diff: ImpactDiff): string {
     path.join(vaultPath, "Reports"),
     `impact-report__${diff.repoId}`,
     ".md",
-    renderImpactReport(diff),
+    renderImpactReport(diff, repoFileSlugById),
     extractFrontmatterGeneratedAt,
   );
 }

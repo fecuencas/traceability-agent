@@ -10,6 +10,7 @@ import { pythonPipAdapter } from "./pythonPipAdapter.js";
 import { rubyBundlerAdapter } from "./rubyBundlerAdapter.js";
 import { rustCargoAdapter } from "./rustCargoAdapter.js";
 import { scanInfraSignals } from "./iacDetector.js";
+import { checkSpringBootWiring } from "../springboot/springBootChecker.js";
 
 const ADAPTERS: LanguageAdapter[] = [
   javaMavenAdapter,
@@ -45,5 +46,9 @@ export function analyzeRepository(repoPath: string, repoId: string): RepoAnalysi
   // Infra-as-code (Terraform/SAM/serverless.yml) é agnóstica de linguagem — roda para qualquer
   // repo, independente do adapter que o reconheceu, em vez de duplicar a chamada em cada um.
   result.signals.push(...scanInfraSignals(repoPath));
+  // Idem para a checagem de wiring do Spring Boot (achados LOCAIS, não de integração entre repos) —
+  // centralizada aqui em vez de duplicada nos adapters Java/Kotlin; a própria função decide se se
+  // aplica (só roda pra repos Java/Kotlin que realmente dependem de org.springframework.boot).
+  result.localFindings = checkSpringBootWiring(repoPath, result);
   return result;
 }
