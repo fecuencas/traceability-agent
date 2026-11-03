@@ -66,6 +66,11 @@ that, breaking changes may land within the `0.x` line.
   →4.6.7). One remaining low-severity advisory (`katex`, pulled in by `mermaid`) still requires
   the `mermaid` 11→12 major bump already declined earlier for an unrelated high-severity issue in
   that line (`chevrotain`→`lodash-es`) — tracked, not fixed in this release.
+- CI (`.github/workflows/test.yml`) only triggered on pushes/PRs to `master`. The repository's
+  default branch had since been renamed to `main` on GitHub (via web-UI-created commits for the
+  issue/PR templates and code of conduct, which never reached any local clone) — so `test`/
+  `security`, the exact checks branch protection on `main` requires before merging, had never
+  actually run there. Triggers updated to `main`; `CONTRIBUTING.md`/`SECURITY.md` updated to match.
 
 - **Security:** untrusted text sourced from a scanned repository (queue/topic names, dependency
   versions, artifact coordinates) was interpolated into Mermaid diagram labels without escaping

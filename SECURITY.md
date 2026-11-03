@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-This project is pre-1.0 (`0.x`). Only the latest release on `master` is supported; there is no
+This project is pre-1.0 (`0.x`). Only the latest release on `main` is supported; there is no
 backport policy for older `0.x` versions yet.
 
 ## Reporting a vulnerability

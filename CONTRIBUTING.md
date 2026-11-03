@@ -19,7 +19,7 @@ npm test
 This builds the TypeScript sources (`tsc`) and then runs every `*.test.ts` file colocated with
 the module it tests (`src/<area>/<file>.test.ts`) via Node's built-in test runner
 (`node --test`, no extra dependency). CI (`.github/workflows/test.yml`) runs the same command on
-Node 18.x and 20.x for every push/PR to `master`.
+Node 18.x and 20.x for every push/PR to `main`.
 
 There's no separate lint/typecheck script yet — `npm run build` (which `npm test` runs first) is
 a full `tsc` compile, so a type error already fails `npm test` before any test executes.
@@ -53,7 +53,7 @@ new code path.
 3. Follow [SemVer](https://semver.org) intent in your description if the change affects the
    public API/CLI/MCP tool surface (new feature vs. bug fix vs. breaking change), so the version
    bump on release reflects it correctly.
-4. Open the PR against `master`. CI must pass (build + tests, Node 18.x and 20.x) before merge.
+4. Open the PR against `main`. CI must pass (build + tests, Node 18.x and 20.x) before merge.
 
 ## Reporting bugs / requesting features
 
